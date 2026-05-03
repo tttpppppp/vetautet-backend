@@ -1,0 +1,101 @@
+server:
+  port: 8080
+  servlet:
+    context-path: /api/v1
+
+spring:
+  datasource:
+    url: ${DB_URL:jdbc:mysql://localhost:3308/vetautet?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Ho_Chi_Minh}
+    username: ${DB_USERNAME:root}
+    password: ${DB_PASSWORD:root}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+  data:
+    redis:
+      host: localhost
+      port: 6319
+  kafka:
+    bootstrap-servers: localhost:9092
+    consumer:
+      group-id: vetautet-group
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
+      properties:
+        spring.json.trusted.packages: "*"
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+  jpa:
+    hibernate:
+      ddl-auto: none
+    show-sql: ${JPA_SHOW_SQL:false}
+    properties:
+      hibernate:
+        format_sql: ${HIBERNATE_FORMAT_SQL:false}
+  mail:
+    host: ${MAIL_HOST:localhost}
+    port: ${MAIL_PORT:587}
+    username: ${MAIL_USERNAME:}
+    password: ${MAIL_PASSWORD:}
+    properties:
+      mail:
+        smtp:
+          auth: ${MAIL_SMTP_AUTH:true}
+          starttls:
+            enable: ${MAIL_SMTP_STARTTLS_ENABLE:true}
+
+# JWT Config
+jwt:
+  secret: ${JWT_SECRET:vetautet-dev-secret-key-must-be-at-least-256-bits-long}
+  access-token-expiration: 900000
+  refresh-token-expiration: 604800000
+
+google:
+  client-id: ${GOOGLE_CLIENT_ID:332753021792-6oneka96sagnuhi4n07gq0uetqu5583o.apps.googleusercontent.com}
+
+ticket:
+  qr:
+    # Override in production so QR tokens use a secret independent from JWT.
+    secret: ${TICKET_QR_SECRET:${jwt.secret}}
+
+# Cloudinary Config
+cloudinary:
+  cloud-name: ${CLOUDINARY_CLOUD_NAME:}
+  api-key: ${CLOUDINARY_API_KEY:}
+  api-secret: ${CLOUDINARY_API_SECRET:}
+
+momo:
+  endpoint: ${MOMO_ENDPOINT:https://test-payment.momo.vn/v2/gateway/api/create}
+  partner-code: ${MOMO_PARTNER_CODE:}
+  access-key: ${MOMO_ACCESS_KEY:}
+  secret-key: ${MOMO_SECRET_KEY:}
+  redirect-url: ${MOMO_REDIRECT_URL:http://localhost:5173/payment/momo-return}
+  ipn-url: ${MOMO_IPN_URL:http://127.0.0.1:8080/api/v1/payments/momo/ipn}
+  request-type: ${MOMO_REQUEST_TYPE:captureWallet}
+  lang: ${MOMO_LANG:vi}
+
+vnpay:
+  pay-url: ${VNPAY_PAY_URL:https://sandbox.vnpayment.vn/paymentv2/vpcpay.html}
+  tmn-code: ${VNPAY_TMN_CODE:}
+  hash-secret: ${VNPAY_HASH_SECRET:}
+  return-url: ${VNPAY_RETURN_URL:http://localhost:5173/payment/vnpay-return}
+  version: 2.1.0
+  command: pay
+  order-type: other
+  locale: vn
+  curr-code: VND
+  expire-minutes: 15
+
+vetautet:
+  kafka:
+    producer:
+      enabled: ${KAFKA_PRODUCER_ENABLED:false}
+  mail:
+    enabled: ${MAIL_ENABLED:true}
+
+logging:
+  level:
+    org.hibernate.SQL: ${HIBERNATE_SQL_LOG_LEVEL:WARN}
+    org.hibernate.orm.jdbc.bind: ${HIBERNATE_BIND_LOG_LEVEL:WARN}
+    org.springframework.kafka: ${KAFKA_LOG_LEVEL:WARN}
+    org.apache.kafka: ${KAFKA_CLIENT_LOG_LEVEL:WARN}
