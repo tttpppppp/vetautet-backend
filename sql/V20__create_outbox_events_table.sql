@@ -1,0 +1,22 @@
+CREATE TABLE outbox_events (
+    id BIGINT NOT NULL AUTO_INCREMENT,
+    event_id VARCHAR(36) NOT NULL,
+    topic VARCHAR(255) NOT NULL,
+    event_key VARCHAR(255) NULL,
+    event_type VARCHAR(255) NOT NULL,
+    aggregate_type VARCHAR(255) NULL,
+    aggregate_id VARCHAR(255) NULL,
+    payload_type VARCHAR(255) NOT NULL,
+    payload_json LONGTEXT NOT NULL,
+    status VARCHAR(32) NOT NULL DEFAULT 'PENDING',
+    published BIT(1) NOT NULL DEFAULT b'0',
+    retry_count INT NOT NULL DEFAULT 0,
+    last_error VARCHAR(1000) NULL,
+    next_retry_at DATETIME NULL,
+    created_at DATETIME NULL,
+    updated_at DATETIME NULL,
+    published_at DATETIME NULL,
+    PRIMARY KEY (id),
+    UNIQUE KEY ux_outbox_events_event_id (event_id),
+    KEY idx_outbox_events_pending (published, next_retry_at, created_at)
+);

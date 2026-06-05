@@ -40,7 +40,9 @@ public class NotificationEntity {
         BOOKING_CONFIRMED,
         BOOKING_CANCELLED,
         BOOKING_EXPIRED,
+        BOOKING_FAILED,
         PAYMENT_SUCCESS,
+        PAYMENT_FAILED,
         SYSTEM
     }
 }

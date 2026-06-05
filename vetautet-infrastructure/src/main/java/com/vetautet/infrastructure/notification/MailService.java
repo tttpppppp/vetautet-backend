@@ -42,9 +42,16 @@ public class MailService {
         message.setSubject(event.getSubject());
         message.setText(event.getContent());
 
-        mailSender.send(message);
-        System.out.println(">>> [MAIL] Sent booking confirmation mail. bookingId=" + event.getBookingId()
-                + ", to=" + event.getRecipientEmail());
+        try {
+            mailSender.send(message);
+            System.out.println(">>> [MAIL] Sent booking confirmation mail. bookingId=" + event.getBookingId()
+                    + ", to=" + event.getRecipientEmail());
+        } catch (Exception ex) {
+            System.err.println(">>> [MAIL SEND FAILED] bookingId=" + event.getBookingId()
+                    + ", to=" + event.getRecipientEmail()
+                    + ", error=" + ex.getMessage());
+            logMailFallback(event);
+        }
     }
 
     private void logMailFallback(BookingMailEvent event) {

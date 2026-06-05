@@ -761,7 +761,104 @@ sequenceDiagram
     MailConsumer->>Mail: send or mock mail
 ```
 
-### 10.7. Huong nang cap saga/outbox
+### 10.7. Saga compensation khi payment fail
+
+Flow hien tai da co buoc rollback/co bu tru khi cong thanh toan tra ve that bai.
+
+Trang thai chinh:
+
+```text
+Booking: PENDING -> CANCELLED
+Payment: PENDING -> FAILED
+Ticket : HOLD -> AVAILABLE
+Redis  : delete seat:{tripId}:{ticketId} + delete trip cache
+Saga   : *_PAYMENT_FAILED -> COMPENSATED
+```
+
+Chi tiet:
+
+1. User tao booking thanh cong.
+2. He thong giu ghe:
+   - Booking status: `PENDING`.
+   - Ticket status: `HOLD`.
+   - Redis hold key: `seat:{tripId}:{ticketId}` co TTL 15 phut.
+3. User thanh toan qua MoMo/VNPAY.
+4. Neu payment provider tra ve fail:
+   - He thong cap nhat payment status thanh `FAILED`.
+   - He thong goi rollback booking bang `updateBookingStatus(bookingId, "CANCELLED")`.
+   - Booking status thanh `CANCELLED`.
+   - Ticket status duoc tra ve `AVAILABLE`.
+   - `holdExpiredAt` bi clear.
+   - Redis hold key va trip cache bi xoa.
+   - WebSocket ban seat event `AVAILABLE`.
+   - He thong publish saga event vao topic `booking-saga-events`.
+
+Event saga mau:
+
+```json
+{
+  "bookingId": 43,
+  "tripId": null,
+  "ticketIds": [],
+  "step": "MOMO_PAYMENT_FAILED",
+  "status": "COMPENSATED",
+  "reason": "Payment result received",
+  "occurredAt": "2026-05-07T00:00:00"
+}
+```
+
+VNPAY cung tuong tu:
+
+```json
+{
+  "bookingId": 43,
+  "tripId": null,
+  "ticketIds": [],
+  "step": "VNPAY_PAYMENT_FAILED",
+  "status": "COMPENSATED",
+  "reason": "Payment result received",
+  "occurredAt": "2026-05-07T00:00:00"
+}
+```
+
+Luu y quan trong:
+
+- Chi rollback stock khi payment provider tra ve `FAILED`.
+- Neu payment da `SUCCESS` nhung buoc confirm booking bi loi, he thong chi publish saga event `FAILED` de retry/manual fix.
+- Khong tu dong tra ghe trong case payment success nhung confirm fail, vi da nhan tien ma release ghe co the gay oversell va sai du lieu kinh doanh.
+- Notification/mail fail khong lam rollback booking, vi booking va stock da dung; cac buoc nay nen retry doc lap.
+
+Sequence fail path:
+
+```mermaid
+sequenceDiagram
+    participant Pay as Payment callback
+    participant Payment as PaymentAppService
+    participant Booking as BookingAppService
+    participant DB as Database
+    participant Redis as Redis
+    participant WS as WebSocket
+    participant Kafka as Kafka
+
+    Pay->>Payment: MoMo/VNPAY result failed
+    Payment->>DB: save payment FAILED
+    Payment->>Booking: updateBookingStatus(bookingId, CANCELLED)
+    Booking->>DB: booking CANCELLED + tickets AVAILABLE
+    Booking->>Redis: delete hold key + evict trip cache
+    Booking->>WS: seat AVAILABLE
+    Payment->>Kafka: booking-saga-events status=COMPENSATED
+```
+
+File lien quan:
+
+```text
+vetautet-application/src/main/java/com/vetautet/application/service/payment/impl/PaymentAppServiceImpl.java
+vetautet-application/src/main/java/com/vetautet/application/service/order/impl/BookingAppServiceImpl.java
+vetautet-domain/src/main/java/com/vetautet/domain/model/BookingSagaEvent.java
+vetautet-infrastructure/src/main/java/com/vetautet/infrastructure/config/KafkaConfig.java
+```
+
+### 10.8. Huong nang cap saga/outbox
 
 Khi nang len saga parent, nen tach ro command/event:
 

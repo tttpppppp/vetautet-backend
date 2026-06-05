@@ -9,6 +9,7 @@ import com.vetautet.domain.model.Booking;
 import com.vetautet.domain.model.BookingDetail;
 import com.vetautet.domain.model.Ticket;
 import com.vetautet.domain.model.Trip;
+import com.vetautet.domain.security.SensitiveDataCryptoService;
 import com.vetautet.domain.service.BookingDomainService;
 import com.vetautet.domain.service.TripDomainService;
 import org.springframework.beans.factory.annotation.Value;
@@ -29,13 +30,17 @@ public class TicketQrService {
 
     private final BookingDomainService bookingDomainService;
     private final TripDomainService tripDomainService;
+    private final SensitiveDataCryptoService sensitiveDataCryptoService;
 
     @Value("${ticket.qr.secret:${jwt.secret}}")
     private String qrSecret;
 
-    public TicketQrService(BookingDomainService bookingDomainService, TripDomainService tripDomainService) {
+    public TicketQrService(BookingDomainService bookingDomainService,
+                           TripDomainService tripDomainService,
+                           SensitiveDataCryptoService sensitiveDataCryptoService) {
         this.bookingDomainService = bookingDomainService;
         this.tripDomainService = tripDomainService;
+        this.sensitiveDataCryptoService = sensitiveDataCryptoService;
     }
 
     public String generateToken(Long bookingId, Long ticketId) {
@@ -111,7 +116,7 @@ public class TicketQrService {
                 .ticketStatus(ticket.getStatus())
                 .bookingStatus(booking.getStatus())
                 .passengerName(detail.getPassengerName())
-                .passengerIdCard(detail.getPassengerIdCard())
+                .passengerIdCard(sensitiveDataCryptoService.decrypt(detail.getPassengerIdCard()))
                 .seatNumber(ticket.getSeatNumber())
                 .carriageNumber(ticket.getCarriageNumber())
                 .carriageTypeName(ticket.getCarriageTypeName())

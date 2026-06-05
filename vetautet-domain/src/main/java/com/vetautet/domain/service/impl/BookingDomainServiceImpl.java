@@ -38,6 +38,17 @@ public class BookingDomainServiceImpl implements BookingDomainService {
     }
 
     @Override
+    public Booking getBookingByOrderNumber(String orderNumber) {
+        return bookingRepository.findByOrderNumber(orderNumber)
+                .orElseThrow(() -> new RuntimeException("Booking not found: " + orderNumber));
+    }
+
+    @Override
+    public Booking findBookingByAsyncRequestIdOrNull(String asyncRequestId) {
+        return bookingRepository.findByAsyncRequestId(asyncRequestId).orElse(null);
+    }
+
+    @Override
     public Booking getBookingByIdFetched(Long bookingId) {
         return bookingRepository.findByIdFetched(bookingId)
                 .orElseThrow(() -> new RuntimeException("Booking not found: " + bookingId));

@@ -15,6 +15,19 @@ public class BookingEntity {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
+    @Column(name = "order_number", nullable = false, unique = true, length = 64)
+    private String orderNumber;
+
+    @Column(name = "storage_month", nullable = false, length = 6)
+    private String storageMonth;
+
+    @Column(name = "async_request_id", unique = true, length = 64)
+    private String asyncRequestId;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "trip_type", nullable = false, length = 20)
+    private TripType tripType = TripType.ONE_WAY;
+
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "user_id", nullable = false)
     private UserEntity user;
@@ -29,6 +42,18 @@ public class BookingEntity {
 
     @Column(nullable = false)
     private BigDecimal totalPrice;
+
+    @Column(length = 150)
+    private String contactName;
+
+    @Column(length = 150)
+    private String contactEmail;
+
+    @Column(length = 30)
+    private String contactPhone;
+
+    @Column(length = 512)
+    private String contactIdCard;
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
@@ -46,5 +71,9 @@ public class BookingEntity {
 
     public enum BookingStatus {
         PENDING, PAID, CONFIRMED, EXPIRED, CANCELLED, REFUNDED, PARTIALLY_REFUNDED
+    }
+
+    public enum TripType {
+        ONE_WAY, ROUND_TRIP
     }
 }

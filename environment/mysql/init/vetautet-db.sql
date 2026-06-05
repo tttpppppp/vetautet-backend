@@ -174,6 +174,11 @@ CREATE TABLE IF NOT EXISTS `trips` (
     `arrival_station_id` BIGINT NOT NULL,
     `departure_time` DATETIME NOT NULL,
     `arrival_time` DATETIME NOT NULL,
+    `service_date` DATE DEFAULT NULL,
+    `estimated_departure_time` DATETIME DEFAULT NULL,
+    `estimated_arrival_time` DATETIME DEFAULT NULL,
+    `actual_departure_time` DATETIME DEFAULT NULL,
+    `actual_arrival_time` DATETIME DEFAULT NULL,
     `duration` INT COMMENT 'Minutes',
     `status` ENUM('SCHEDULED', 'RUNNING', 'COMPLETED', 'CANCELLED') DEFAULT 'SCHEDULED',
     `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -231,17 +236,25 @@ CREATE TABLE IF NOT EXISTS `tickets` (
 -- 14. Bookings
 CREATE TABLE IF NOT EXISTS `bookings` (
     `id` BIGINT AUTO_INCREMENT PRIMARY KEY,
+    `order_number` VARCHAR(64) NOT NULL UNIQUE,
+    `storage_month` CHAR(6) NOT NULL,
+    `trip_type` ENUM('ONE_WAY', 'ROUND_TRIP') NOT NULL DEFAULT 'ONE_WAY',
     `user_id` BIGINT NOT NULL,
     `original_price` DECIMAL(15,2) NOT NULL DEFAULT 0,
     `promo_code` VARCHAR(50) DEFAULT NULL,
     `discount_amount` DECIMAL(15,2) NOT NULL DEFAULT 0,
     `total_price` DECIMAL(15,2) NOT NULL,
+    `contact_name` VARCHAR(150) DEFAULT NULL,
+    `contact_email` VARCHAR(150) DEFAULT NULL,
+    `contact_phone` VARCHAR(30) DEFAULT NULL,
+    `contact_id_card` VARCHAR(512) DEFAULT NULL,
     `status` ENUM('PENDING', 'PAID', 'CONFIRMED', 'EXPIRED', 'CANCELLED', 'REFUNDED', 'PARTIALLY_REFUNDED') NOT NULL DEFAULT 'PENDING',
     `expired_at` DATETIME NOT NULL,
     `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP,
     `updated_at` DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     `deleted_at` DATETIME DEFAULT NULL,
     INDEX `idx_user_status` (`user_id`, `status`),
+    INDEX `idx_bookings_storage_month` (`storage_month`),
     INDEX `idx_bookings_promo_code` (`promo_code`),
     INDEX `idx_expired_at` (`expired_at`),
     INDEX `idx_created_at` (`created_at`),
@@ -253,13 +266,22 @@ CREATE TABLE IF NOT EXISTS `booking_details` (
     `id` BIGINT AUTO_INCREMENT PRIMARY KEY,
     `booking_id` BIGINT NOT NULL,
     `ticket_id` BIGINT NOT NULL,
+    `direction` ENUM('OUTBOUND', 'RETURN') NOT NULL DEFAULT 'OUTBOUND',
+    `departure_station_id` BIGINT DEFAULT NULL,
+    `arrival_station_id` BIGINT DEFAULT NULL,
+    `segment_ids` VARCHAR(255) DEFAULT NULL,
+    `segment_price` DECIMAL(15,2) DEFAULT NULL,
     `passenger_name` VARCHAR(100) NOT NULL,
-    `passenger_id_card` VARCHAR(50) NOT NULL,
+    `passenger_id_card` VARCHAR(512) NOT NULL,
     `passenger_type` VARCHAR(50),
     `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP,
     KEY `idx_booking_details_ticket_id` (`ticket_id`),
+    KEY `idx_booking_details_direction` (`booking_id`, `direction`),
+    KEY `idx_booking_details_route` (`departure_station_id`, `arrival_station_id`),
     CONSTRAINT `fk_booking_details_booking` FOREIGN KEY (`booking_id`) REFERENCES `bookings` (`id`),
-    CONSTRAINT `fk_booking_details_ticket` FOREIGN KEY (`ticket_id`) REFERENCES `tickets` (`id`)
+    CONSTRAINT `fk_booking_details_ticket` FOREIGN KEY (`ticket_id`) REFERENCES `tickets` (`id`),
+    CONSTRAINT `fk_booking_details_departure_station` FOREIGN KEY (`departure_station_id`) REFERENCES `stations` (`id`),
+    CONSTRAINT `fk_booking_details_arrival_station` FOREIGN KEY (`arrival_station_id`) REFERENCES `stations` (`id`)
 ) ENGINE = InnoDB;
 
 -- 16. Payments
@@ -278,13 +300,37 @@ CREATE TABLE IF NOT EXISTS `payments` (
     CONSTRAINT `fk_payments_booking` FOREIGN KEY (`booking_id`) REFERENCES `bookings` (`id`)
 ) ENGINE = InnoDB;
 
--- 17. Notifications
+-- 17. Benchmark Test Orders
+CREATE TABLE IF NOT EXISTS `test_orders` (
+    `id` BIGINT AUTO_INCREMENT PRIMARY KEY,
+    `request_id` VARCHAR(80) NOT NULL,
+    `user_ref` BIGINT NOT NULL,
+    `ticket_ref` BIGINT NULL,
+    `quantity` INT NOT NULL,
+    `amount` DECIMAL(18,2) NOT NULL,
+    `status` VARCHAR(32) NOT NULL,
+    `source` VARCHAR(32) NOT NULL,
+    `note` VARCHAR(255) NULL,
+    `kafka_key` VARCHAR(80) NOT NULL,
+    `received_at` DATETIME NOT NULL,
+    `processed_at` DATETIME NOT NULL,
+    `created_at` DATETIME NOT NULL,
+    `updated_at` DATETIME NOT NULL,
+    UNIQUE KEY `uk_test_orders_request_id` (`request_id`),
+    KEY `idx_test_orders_user_ref` (`user_ref`),
+    KEY `idx_test_orders_ticket_ref` (`ticket_ref`),
+    KEY `idx_test_orders_status` (`status`),
+    KEY `idx_test_orders_processed_at` (`processed_at`),
+    KEY `idx_test_orders_created_at` (`created_at`)
+) ENGINE = InnoDB;
+
+-- 18. Notifications
 CREATE TABLE IF NOT EXISTS `notifications` (
     `id` BIGINT AUTO_INCREMENT PRIMARY KEY,
     `user_id` BIGINT NOT NULL,
     `title` VARCHAR(255) NOT NULL,
     `content` TEXT,
-    `type` ENUM('BOOKING_CONFIRMED', 'BOOKING_CANCELLED', 'BOOKING_EXPIRED', 'PAYMENT_SUCCESS', 'SYSTEM') NOT NULL,
+    `type` ENUM('BOOKING_CONFIRMED', 'BOOKING_CANCELLED', 'BOOKING_EXPIRED', 'BOOKING_FAILED', 'PAYMENT_SUCCESS', 'PAYMENT_FAILED', 'SYSTEM') NOT NULL,
     `reference_id` BIGINT NOT NULL COMMENT 'ID tham chieu, thuong la bookingId',
     `is_read` TINYINT(1) NOT NULL DEFAULT 0,
     `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -294,7 +340,7 @@ CREATE TABLE IF NOT EXISTS `notifications` (
     INDEX `idx_notifications_created_at` (`created_at`)
 ) ENGINE = InnoDB;
 
--- 18. Ticket Prices
+-- 19. Ticket Prices
 CREATE TABLE IF NOT EXISTS `ticket_prices` (
     `id` BIGINT AUTO_INCREMENT PRIMARY KEY,
     `trip_id` BIGINT NOT NULL,
@@ -307,6 +353,89 @@ CREATE TABLE IF NOT EXISTS `ticket_prices` (
 ) ENGINE = InnoDB;
 
 -- 18. Cấu hình hệ thống (System Configs)
+-- 20. Trip Stops / Itinerary
+CREATE TABLE IF NOT EXISTS `trip_stops` (
+    `id` BIGINT AUTO_INCREMENT PRIMARY KEY,
+    `trip_id` BIGINT NOT NULL,
+    `station_id` BIGINT NOT NULL,
+    `stop_order` INT NOT NULL,
+    `scheduled_arrival_time` DATETIME DEFAULT NULL,
+    `scheduled_departure_time` DATETIME DEFAULT NULL,
+    `estimated_arrival_time` DATETIME DEFAULT NULL,
+    `estimated_departure_time` DATETIME DEFAULT NULL,
+    `actual_arrival_time` DATETIME DEFAULT NULL,
+    `actual_departure_time` DATETIME DEFAULT NULL,
+    `distance_from_origin_km` DECIMAL(10,2) DEFAULT 0,
+    `status` ENUM('SCHEDULED', 'ARRIVING', 'ARRIVED', 'DEPARTED', 'DELAYED', 'SKIPPED', 'CANCELLED') NOT NULL DEFAULT 'SCHEDULED',
+    `platform` VARCHAR(20) DEFAULT NULL,
+    `note` VARCHAR(255) DEFAULT NULL,
+    `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP,
+    `updated_at` DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY `uk_trip_stop_order` (`trip_id`, `stop_order`),
+    UNIQUE KEY `uk_trip_station` (`trip_id`, `station_id`),
+    INDEX `idx_trip_stops_station` (`station_id`),
+    CONSTRAINT `fk_trip_stops_trip` FOREIGN KEY (`trip_id`) REFERENCES `trips` (`id`),
+    CONSTRAINT `fk_trip_stops_station` FOREIGN KEY (`station_id`) REFERENCES `stations` (`id`)
+) ENGINE = InnoDB;
+
+-- 21. Trip Segments between consecutive stops
+CREATE TABLE IF NOT EXISTS `trip_segments` (
+    `id` BIGINT AUTO_INCREMENT PRIMARY KEY,
+    `trip_id` BIGINT NOT NULL,
+    `from_stop_id` BIGINT NOT NULL,
+    `to_stop_id` BIGINT NOT NULL,
+    `segment_order` INT NOT NULL,
+    `distance_km` DECIMAL(10,2) DEFAULT 0,
+    `status` ENUM('SCHEDULED', 'RUNNING', 'COMPLETED', 'CANCELLED') NOT NULL DEFAULT 'SCHEDULED',
+    `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP,
+    `updated_at` DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY `uk_trip_segment_order` (`trip_id`, `segment_order`),
+    INDEX `idx_trip_segments_from_stop` (`from_stop_id`),
+    INDEX `idx_trip_segments_to_stop` (`to_stop_id`),
+    CONSTRAINT `fk_trip_segments_trip` FOREIGN KEY (`trip_id`) REFERENCES `trips` (`id`),
+    CONSTRAINT `fk_trip_segments_from_stop` FOREIGN KEY (`from_stop_id`) REFERENCES `trip_stops` (`id`),
+    CONSTRAINT `fk_trip_segments_to_stop` FOREIGN KEY (`to_stop_id`) REFERENCES `trip_stops` (`id`)
+) ENGINE = InnoDB;
+
+-- 22. Segment fare table
+CREATE TABLE IF NOT EXISTS `trip_segment_prices` (
+    `id` BIGINT AUTO_INCREMENT PRIMARY KEY,
+    `segment_id` BIGINT NOT NULL,
+    `carriage_type_id` BIGINT NOT NULL,
+    `passenger_type` VARCHAR(30) NOT NULL DEFAULT 'ADULT',
+    `price` DECIMAL(15,2) NOT NULL,
+    `currency` VARCHAR(10) NOT NULL DEFAULT 'VND',
+    `status` ENUM('ACTIVE', 'INACTIVE') NOT NULL DEFAULT 'ACTIVE',
+    `effective_from` DATETIME DEFAULT NULL,
+    `effective_to` DATETIME DEFAULT NULL,
+    `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP,
+    `updated_at` DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY `uk_segment_price` (`segment_id`, `carriage_type_id`, `passenger_type`),
+    INDEX `idx_trip_segment_prices_type` (`carriage_type_id`),
+    CONSTRAINT `fk_trip_segment_prices_segment` FOREIGN KEY (`segment_id`) REFERENCES `trip_segments` (`id`),
+    CONSTRAINT `fk_trip_segment_prices_type` FOREIGN KEY (`carriage_type_id`) REFERENCES `carriage_types` (`id`)
+) ENGINE = InnoDB;
+
+-- 23. Seat state per segment
+CREATE TABLE IF NOT EXISTS `seat_segment_inventory` (
+    `id` BIGINT AUTO_INCREMENT PRIMARY KEY,
+    `trip_id` BIGINT NOT NULL,
+    `segment_id` BIGINT NOT NULL,
+    `seat_id` BIGINT NOT NULL,
+    `status` ENUM('AVAILABLE', 'HOLD', 'BOOKED', 'BLOCKED') NOT NULL DEFAULT 'AVAILABLE',
+    `hold_expired_at` DATETIME DEFAULT NULL,
+    `booking_detail_id` BIGINT DEFAULT NULL,
+    `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP,
+    `updated_at` DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY `uk_segment_seat` (`segment_id`, `seat_id`),
+    INDEX `idx_seat_segment_trip_seat_status` (`trip_id`, `seat_id`, `status`),
+    INDEX `idx_seat_segment_booking_detail` (`booking_detail_id`),
+    CONSTRAINT `fk_seat_segment_trip` FOREIGN KEY (`trip_id`) REFERENCES `trips` (`id`),
+    CONSTRAINT `fk_seat_segment_segment` FOREIGN KEY (`segment_id`) REFERENCES `trip_segments` (`id`),
+    CONSTRAINT `fk_seat_segment_seat` FOREIGN KEY (`seat_id`) REFERENCES `seats` (`id`),
+    CONSTRAINT `fk_seat_segment_booking_detail` FOREIGN KEY (`booking_detail_id`) REFERENCES `booking_details` (`id`)
+) ENGINE = InnoDB;
+
 CREATE TABLE IF NOT EXISTS `system_configs` (
     `id` BIGINT AUTO_INCREMENT PRIMARY KEY,
     `config_key` VARCHAR(100) NOT NULL UNIQUE,
@@ -707,28 +836,412 @@ INSERT INTO `tickets` (`trip_id`, `seat_id`, `price`, `status`) VALUES
 (2, 150, 300000, 'AVAILABLE');
 
 -- 8. Chi tiết đợt Flash Sale
+-- Seed trip itinerary, segment prices, and segment seat inventory for existing demo trips.
+UPDATE `trips`
+SET `service_date` = DATE(`departure_time`),
+    `estimated_departure_time` = COALESCE(`estimated_departure_time`, `departure_time`),
+    `estimated_arrival_time` = COALESCE(`estimated_arrival_time`, `arrival_time`)
+WHERE `service_date` IS NULL
+   OR `estimated_departure_time` IS NULL
+   OR `estimated_arrival_time` IS NULL;
+
+INSERT INTO `trip_stops`
+(`trip_id`, `station_id`, `stop_order`, `scheduled_arrival_time`, `scheduled_departure_time`, `estimated_arrival_time`, `estimated_departure_time`, `distance_from_origin_km`, `status`)
+SELECT t.id, t.departure_station_id, 1, NULL, t.departure_time, NULL, t.departure_time, 0, 'SCHEDULED'
+FROM trips t
+WHERE NOT EXISTS (
+    SELECT 1 FROM trip_stops s WHERE s.trip_id = t.id AND s.stop_order = 1
+);
+
+INSERT INTO `trip_stops`
+(`trip_id`, `station_id`, `stop_order`, `scheduled_arrival_time`, `scheduled_departure_time`, `estimated_arrival_time`, `estimated_departure_time`, `distance_from_origin_km`, `status`)
+SELECT t.id,
+       mid.id,
+       2,
+       TIMESTAMPADD(MINUTE, FLOOR(TIMESTAMPDIFF(MINUTE, t.departure_time, t.arrival_time) / 2), t.departure_time),
+       TIMESTAMPADD(MINUTE, FLOOR(TIMESTAMPDIFF(MINUTE, t.departure_time, t.arrival_time) / 2) + 15, t.departure_time),
+       TIMESTAMPADD(MINUTE, FLOOR(TIMESTAMPDIFF(MINUTE, t.departure_time, t.arrival_time) / 2), t.departure_time),
+       TIMESTAMPADD(MINUTE, FLOOR(TIMESTAMPDIFF(MINUTE, t.departure_time, t.arrival_time) / 2) + 15, t.departure_time),
+       791,
+       'SCHEDULED'
+FROM trips t
+JOIN stations dep ON dep.id = t.departure_station_id
+JOIN stations arr ON arr.id = t.arrival_station_id
+JOIN stations mid ON mid.code = 'DAN'
+WHERE ((dep.code = 'HAN' AND arr.code = 'SGN') OR (dep.code = 'SGN' AND arr.code = 'HAN'))
+  AND NOT EXISTS (
+      SELECT 1 FROM trip_stops s WHERE s.trip_id = t.id AND s.stop_order = 2
+  );
+
+INSERT INTO `trip_stops`
+(`trip_id`, `station_id`, `stop_order`, `scheduled_arrival_time`, `scheduled_departure_time`, `estimated_arrival_time`, `estimated_departure_time`, `distance_from_origin_km`, `status`)
+SELECT t.id,
+       t.arrival_station_id,
+       CASE WHEN ((dep.code = 'HAN' AND arr.code = 'SGN') OR (dep.code = 'SGN' AND arr.code = 'HAN')) THEN 3 ELSE 2 END,
+       t.arrival_time,
+       NULL,
+       t.arrival_time,
+       NULL,
+       CASE
+           WHEN ((dep.code = 'HAN' AND arr.code = 'SGN') OR (dep.code = 'SGN' AND arr.code = 'HAN')) THEN 1726
+           WHEN ((dep.code = 'HAN' AND arr.code = 'DAN') OR (dep.code = 'DAN' AND arr.code = 'HAN')) THEN 791
+           WHEN ((dep.code = 'DAN' AND arr.code = 'SGN') OR (dep.code = 'SGN' AND arr.code = 'DAN')) THEN 935
+           ELSE 0
+       END,
+       'SCHEDULED'
+FROM trips t
+JOIN stations dep ON dep.id = t.departure_station_id
+JOIN stations arr ON arr.id = t.arrival_station_id
+WHERE NOT EXISTS (
+    SELECT 1
+    FROM trip_stops s
+    WHERE s.trip_id = t.id
+      AND s.stop_order = CASE WHEN ((dep.code = 'HAN' AND arr.code = 'SGN') OR (dep.code = 'SGN' AND arr.code = 'HAN')) THEN 3 ELSE 2 END
+);
+
+INSERT INTO `trip_segments` (`trip_id`, `from_stop_id`, `to_stop_id`, `segment_order`, `distance_km`, `status`)
+SELECT s1.trip_id,
+       s1.id,
+       s2.id,
+       s1.stop_order,
+       GREATEST(COALESCE(s2.distance_from_origin_km, 0) - COALESCE(s1.distance_from_origin_km, 0), 0),
+       'SCHEDULED'
+FROM trip_stops s1
+JOIN trip_stops s2 ON s2.trip_id = s1.trip_id AND s2.stop_order = s1.stop_order + 1
+WHERE NOT EXISTS (
+    SELECT 1 FROM trip_segments seg
+    WHERE seg.trip_id = s1.trip_id AND seg.segment_order = s1.stop_order
+);
+
+INSERT INTO `trip_segment_prices` (`segment_id`, `carriage_type_id`, `passenger_type`, `price`, `currency`, `status`)
+SELECT seg.id,
+       tp.type_id,
+       'ADULT',
+       ROUND(tp.price / segment_count.segment_total, 0),
+       'VND',
+       'ACTIVE'
+FROM trip_segments seg
+JOIN ticket_prices tp ON tp.trip_id = seg.trip_id
+JOIN (
+    SELECT trip_id, COUNT(*) AS segment_total
+    FROM trip_segments
+    GROUP BY trip_id
+) segment_count ON segment_count.trip_id = seg.trip_id
+ON DUPLICATE KEY UPDATE
+    price = VALUES(price),
+    currency = VALUES(currency),
+    status = VALUES(status);
+
+INSERT INTO `seat_segment_inventory` (`trip_id`, `segment_id`, `seat_id`, `status`)
+SELECT seg.trip_id,
+       seg.id,
+       s.id,
+       COALESCE(tk.status, 'AVAILABLE')
+FROM trip_segments seg
+JOIN trips t ON t.id = seg.trip_id
+JOIN carriages c ON c.train_id = t.train_id
+JOIN seats s ON s.carriage_id = c.id
+LEFT JOIN tickets tk ON tk.trip_id = seg.trip_id AND tk.seat_id = s.id
+WHERE NOT EXISTS (
+    SELECT 1 FROM seat_segment_inventory inv
+    WHERE inv.segment_id = seg.id AND inv.seat_id = s.id
+);
+
+-- Demo trips with detailed stops, ordered segments, segment fares, and segment seat inventory.
+INSERT INTO `stations` (`name`, `code`, `location`) VALUES
+('Ga Vinh', 'VIN', 'Nghệ An'),
+('Ga Huế', 'HUE', 'Thừa Thiên Huế'),
+('Ga Nha Trang', 'NTR', 'Khánh Hòa')
+ON DUPLICATE KEY UPDATE
+    `name` = VALUES(`name`),
+    `location` = VALUES(`location`),
+    `deleted_at` = NULL;
+
+DROP TEMPORARY TABLE IF EXISTS `tmp_demo_trips`;
+CREATE TEMPORARY TABLE `tmp_demo_trips` (
+    `trip_id` BIGINT NOT NULL,
+    `train_code` VARCHAR(20) NOT NULL,
+    `departure_code` VARCHAR(20) NOT NULL,
+    `arrival_code` VARCHAR(20) NOT NULL,
+    `departure_time` DATETIME NOT NULL,
+    `arrival_time` DATETIME NOT NULL,
+    `status` VARCHAR(30) NOT NULL
+);
+
+INSERT INTO `tmp_demo_trips`
+(`trip_id`, `train_code`, `departure_code`, `arrival_code`, `departure_time`, `arrival_time`, `status`) VALUES
+(1, 'SE1', 'HAN', 'SGN', '2026-06-02 08:00:00', '2026-06-03 18:20:00', 'SCHEDULED'),
+(2, 'SE3', 'SGN', 'HAN', '2026-06-02 19:30:00', '2026-06-04 05:45:00', 'SCHEDULED'),
+(3, 'SE1', 'HAN', 'DAN', '2026-06-03 06:20:00', '2026-06-03 21:05:00', 'SCHEDULED'),
+(4, 'SE3', 'DAN', 'SGN', '2026-06-03 07:40:00', '2026-06-04 02:25:00', 'SCHEDULED'),
+(5, 'SE1', 'SGN', 'HAN', '2026-06-04 09:10:00', '2026-06-05 19:40:00', 'SCHEDULED');
+
+INSERT INTO `trips`
+(`id`, `train_id`, `departure_station_id`, `arrival_station_id`, `departure_time`, `arrival_time`, `service_date`,
+ `estimated_departure_time`, `estimated_arrival_time`, `duration`, `status`)
+SELECT dt.trip_id,
+       tr.id,
+       dep.id,
+       arr.id,
+       dt.departure_time,
+       dt.arrival_time,
+       DATE(dt.departure_time),
+       dt.departure_time,
+       dt.arrival_time,
+       TIMESTAMPDIFF(MINUTE, dt.departure_time, dt.arrival_time),
+       dt.status
+FROM `tmp_demo_trips` dt
+JOIN `trains` tr ON tr.code = dt.train_code
+JOIN `stations` dep ON dep.code = dt.departure_code
+JOIN `stations` arr ON arr.code = dt.arrival_code
+ON DUPLICATE KEY UPDATE
+    `train_id` = VALUES(`train_id`),
+    `departure_station_id` = VALUES(`departure_station_id`),
+    `arrival_station_id` = VALUES(`arrival_station_id`),
+    `departure_time` = VALUES(`departure_time`),
+    `arrival_time` = VALUES(`arrival_time`),
+    `service_date` = VALUES(`service_date`),
+    `estimated_departure_time` = VALUES(`estimated_departure_time`),
+    `estimated_arrival_time` = VALUES(`estimated_arrival_time`),
+    `duration` = VALUES(`duration`),
+    `status` = VALUES(`status`),
+    `deleted_at` = NULL;
+
+DELETE inv
+FROM `seat_segment_inventory` inv
+JOIN `trip_segments` seg ON seg.id = inv.segment_id
+WHERE seg.trip_id IN (SELECT trip_id FROM `tmp_demo_trips`);
+
+DELETE price
+FROM `trip_segment_prices` price
+JOIN `trip_segments` seg ON seg.id = price.segment_id
+WHERE seg.trip_id IN (SELECT trip_id FROM `tmp_demo_trips`);
+
+DELETE FROM `trip_segments`
+WHERE `trip_id` IN (SELECT trip_id FROM `tmp_demo_trips`);
+
+DELETE FROM `trip_stops`
+WHERE `trip_id` IN (SELECT trip_id FROM `tmp_demo_trips`);
+
+DROP TEMPORARY TABLE IF EXISTS `tmp_demo_trip_stops`;
+CREATE TEMPORARY TABLE `tmp_demo_trip_stops` (
+    `trip_id` BIGINT NOT NULL,
+    `station_code` VARCHAR(20) NOT NULL,
+    `stop_order` INT NOT NULL,
+    `scheduled_arrival_time` DATETIME NULL,
+    `scheduled_departure_time` DATETIME NULL,
+    `distance_from_origin_km` DECIMAL(10,2) NOT NULL,
+    `status` VARCHAR(30) NOT NULL,
+    `platform` VARCHAR(20) NULL,
+    `note` VARCHAR(255) NULL
+);
+
+INSERT INTO `tmp_demo_trip_stops`
+(`trip_id`, `station_code`, `stop_order`, `scheduled_arrival_time`, `scheduled_departure_time`, `distance_from_origin_km`, `status`, `platform`, `note`) VALUES
+(1, 'HAN', 1, NULL, '2026-06-02 08:00:00', 0, 'SCHEDULED', '1', NULL),
+(1, 'VIN', 2, '2026-06-02 13:05:00', '2026-06-02 13:15:00', 319, 'SCHEDULED', '2', NULL),
+(1, 'HUE', 3, '2026-06-02 20:25:00', '2026-06-02 20:40:00', 688, 'SCHEDULED', '1', NULL),
+(1, 'DAN', 4, '2026-06-02 22:50:00', '2026-06-02 23:05:00', 791, 'SCHEDULED', '3', NULL),
+(1, 'NTR', 5, '2026-06-03 08:35:00', '2026-06-03 08:50:00', 1315, 'SCHEDULED', '2', NULL),
+(1, 'SGN', 6, '2026-06-03 18:20:00', NULL, 1726, 'SCHEDULED', '5', NULL),
+(2, 'SGN', 1, NULL, '2026-06-02 19:30:00', 0, 'SCHEDULED', '4', NULL),
+(2, 'NTR', 2, '2026-06-03 04:55:00', '2026-06-03 05:10:00', 411, 'SCHEDULED', '2', NULL),
+(2, 'DAN', 3, '2026-06-03 14:40:00', '2026-06-03 14:55:00', 935, 'DELAYED', '1', 'Cham 20 phut do uu tien tranh tau'),
+(2, 'HUE', 4, '2026-06-03 17:05:00', '2026-06-03 17:20:00', 1038, 'SCHEDULED', '2', NULL),
+(2, 'VIN', 5, '2026-06-04 00:30:00', '2026-06-04 00:40:00', 1407, 'SCHEDULED', '1', NULL),
+(2, 'HAN', 6, '2026-06-04 05:45:00', NULL, 1726, 'SCHEDULED', '3', NULL),
+(3, 'HAN', 1, NULL, '2026-06-03 06:20:00', 0, 'SCHEDULED', '2', NULL),
+(3, 'VIN', 2, '2026-06-03 11:20:00', '2026-06-03 11:30:00', 319, 'SCHEDULED', '1', NULL),
+(3, 'HUE', 3, '2026-06-03 18:35:00', '2026-06-03 18:50:00', 688, 'SCHEDULED', '2', NULL),
+(3, 'DAN', 4, '2026-06-03 21:05:00', NULL, 791, 'SCHEDULED', '4', NULL),
+(4, 'DAN', 1, NULL, '2026-06-03 07:40:00', 0, 'SCHEDULED', '1', NULL),
+(4, 'NTR', 2, '2026-06-03 16:55:00', '2026-06-03 17:10:00', 524, 'SCHEDULED', '2', NULL),
+(4, 'SGN', 3, '2026-06-04 02:25:00', NULL, 935, 'SCHEDULED', '6', NULL),
+(5, 'SGN', 1, NULL, '2026-06-04 09:10:00', 0, 'SCHEDULED', '5', NULL),
+(5, 'NTR', 2, '2026-06-04 18:20:00', '2026-06-04 18:35:00', 411, 'SCHEDULED', '2', NULL),
+(5, 'DAN', 3, '2026-06-05 04:10:00', '2026-06-05 04:25:00', 935, 'SCHEDULED', '1', NULL),
+(5, 'HAN', 4, '2026-06-05 19:40:00', NULL, 1726, 'SCHEDULED', '3', NULL);
+
+INSERT INTO `trip_stops`
+(`trip_id`, `station_id`, `stop_order`, `scheduled_arrival_time`, `scheduled_departure_time`,
+ `estimated_arrival_time`, `estimated_departure_time`, `distance_from_origin_km`, `status`, `platform`, `note`)
+SELECT ds.trip_id,
+       st.id,
+       ds.stop_order,
+       ds.scheduled_arrival_time,
+       ds.scheduled_departure_time,
+       ds.scheduled_arrival_time,
+       ds.scheduled_departure_time,
+       ds.distance_from_origin_km,
+       ds.status,
+       ds.platform,
+       ds.note
+FROM `tmp_demo_trip_stops` ds
+JOIN `stations` st ON st.code = ds.station_code
+ORDER BY ds.trip_id, ds.stop_order;
+
+INSERT INTO `trip_segments` (`trip_id`, `from_stop_id`, `to_stop_id`, `segment_order`, `distance_km`, `status`)
+SELECT s1.trip_id,
+       s1.id,
+       s2.id,
+       s1.stop_order,
+       GREATEST(COALESCE(s2.distance_from_origin_km, 0) - COALESCE(s1.distance_from_origin_km, 0), 0),
+       'SCHEDULED'
+FROM `trip_stops` s1
+JOIN `trip_stops` s2 ON s2.trip_id = s1.trip_id AND s2.stop_order = s1.stop_order + 1
+WHERE s1.trip_id IN (SELECT trip_id FROM `tmp_demo_trips`)
+ORDER BY s1.trip_id, s1.stop_order;
+
+DROP TEMPORARY TABLE IF EXISTS `tmp_demo_segment_prices`;
+CREATE TEMPORARY TABLE `tmp_demo_segment_prices` (
+    `trip_id` BIGINT NOT NULL,
+    `segment_order` INT NOT NULL,
+    `carriage_type_code` VARCHAR(50) NOT NULL,
+    `passenger_type` VARCHAR(30) NOT NULL,
+    `price` DECIMAL(15,2) NOT NULL
+);
+
+INSERT INTO `tmp_demo_segment_prices`
+(`trip_id`, `segment_order`, `carriage_type_code`, `passenger_type`, `price`) VALUES
+(1, 1, 'SOFT_SEAT', 'ADULT', 130000), (1, 1, 'SLEEPER_4', 'ADULT', 260000),
+(1, 2, 'SOFT_SEAT', 'ADULT', 210000), (1, 2, 'SLEEPER_4', 'ADULT', 420000),
+(1, 3, 'SOFT_SEAT', 'ADULT', 75000),  (1, 3, 'SLEEPER_4', 'ADULT', 150000),
+(1, 4, 'SOFT_SEAT', 'ADULT', 320000), (1, 4, 'SLEEPER_4', 'ADULT', 620000),
+(1, 5, 'SOFT_SEAT', 'ADULT', 360000), (1, 5, 'SLEEPER_4', 'ADULT', 720000),
+(2, 1, 'HARD_SEAT', 'ADULT', 310000),
+(2, 2, 'HARD_SEAT', 'ADULT', 300000),
+(2, 3, 'HARD_SEAT', 'ADULT', 80000),
+(2, 4, 'HARD_SEAT', 'ADULT', 220000),
+(2, 5, 'HARD_SEAT', 'ADULT', 170000),
+(3, 1, 'SOFT_SEAT', 'ADULT', 125000), (3, 1, 'SLEEPER_4', 'ADULT', 240000),
+(3, 2, 'SOFT_SEAT', 'ADULT', 210000), (3, 2, 'SLEEPER_4', 'ADULT', 410000),
+(3, 3, 'SOFT_SEAT', 'ADULT', 80000),  (3, 3, 'SLEEPER_4', 'ADULT', 155000),
+(4, 1, 'HARD_SEAT', 'ADULT', 330000),
+(4, 2, 'HARD_SEAT', 'ADULT', 370000),
+(5, 1, 'SOFT_SEAT', 'ADULT', 390000), (5, 1, 'SLEEPER_4', 'ADULT', 720000),
+(5, 2, 'SOFT_SEAT', 'ADULT', 330000), (5, 2, 'SLEEPER_4', 'ADULT', 650000),
+(5, 3, 'SOFT_SEAT', 'ADULT', 780000), (5, 3, 'SLEEPER_4', 'ADULT', 1350000);
+
+DELETE tp
+FROM `ticket_prices` tp
+JOIN `tmp_demo_trips` dt ON dt.trip_id = tp.trip_id
+LEFT JOIN (
+    SELECT dsp.trip_id, ct.id AS type_id
+    FROM `tmp_demo_segment_prices` dsp
+    JOIN `carriage_types` ct ON ct.code = dsp.carriage_type_code
+    GROUP BY dsp.trip_id, ct.id
+) allowed_price ON allowed_price.trip_id = tp.trip_id AND allowed_price.type_id = tp.type_id
+WHERE allowed_price.type_id IS NULL;
+
+INSERT INTO `ticket_prices` (`trip_id`, `type_id`, `price`)
+SELECT dsp.trip_id,
+       ct.id,
+       SUM(dsp.price)
+FROM `tmp_demo_segment_prices` dsp
+JOIN `carriage_types` ct ON ct.code = dsp.carriage_type_code
+GROUP BY dsp.trip_id, ct.id
+ON DUPLICATE KEY UPDATE
+    `price` = VALUES(`price`);
+
+INSERT INTO `trip_segment_prices` (`segment_id`, `carriage_type_id`, `passenger_type`, `price`, `currency`, `status`)
+SELECT seg.id,
+       ct.id,
+       dsp.passenger_type,
+       dsp.price,
+       'VND',
+       'ACTIVE'
+FROM `tmp_demo_segment_prices` dsp
+JOIN `trip_segments` seg ON seg.trip_id = dsp.trip_id AND seg.segment_order = dsp.segment_order
+JOIN `carriage_types` ct ON ct.code = dsp.carriage_type_code
+ON DUPLICATE KEY UPDATE
+    `price` = VALUES(`price`),
+    `currency` = VALUES(`currency`),
+    `status` = VALUES(`status`);
+
+DELETE tk
+FROM `tickets` tk
+JOIN `trips` t ON t.id = tk.trip_id
+JOIN `seats` s ON s.id = tk.seat_id
+JOIN `carriages` c ON c.id = s.carriage_id
+LEFT JOIN `booking_details` bd ON bd.ticket_id = tk.id
+WHERE tk.trip_id IN (SELECT trip_id FROM `tmp_demo_trips`)
+  AND c.train_id <> t.train_id
+  AND bd.id IS NULL;
+
+INSERT INTO `tickets` (`trip_id`, `seat_id`, `price`, `status`)
+SELECT t.id,
+       s.id,
+       tp.price,
+       CASE
+           WHEN t.id = 1 AND s.seat_number IN ('A3', 'A4', 'G8') THEN 'BOOKED'
+           WHEN t.id = 2 AND s.seat_number IN ('C2', 'C7', 'C12') THEN 'BOOKED'
+           WHEN t.id = 3 AND s.seat_number IN ('A1', 'G1') THEN 'HOLD'
+           WHEN t.id = 4 AND s.seat_number IN ('C4', 'C5', 'C6') THEN 'BOOKED'
+           WHEN t.id = 5 AND s.seat_number IN ('A9', 'G2', 'G3') THEN 'BOOKED'
+           ELSE 'AVAILABLE'
+       END
+FROM `trips` t
+JOIN `carriages` c ON c.train_id = t.train_id
+JOIN `seats` s ON s.carriage_id = c.id
+JOIN `ticket_prices` tp ON tp.trip_id = t.id AND tp.type_id = c.type_id
+WHERE t.id IN (SELECT trip_id FROM `tmp_demo_trips`)
+ON DUPLICATE KEY UPDATE
+    `price` = VALUES(`price`),
+    `status` = IF(`tickets`.`status` = 'AVAILABLE', VALUES(`status`), `tickets`.`status`);
+
+INSERT INTO `seat_segment_inventory` (`trip_id`, `segment_id`, `seat_id`, `status`)
+SELECT seg.trip_id,
+       seg.id,
+       s.id,
+       CASE
+           WHEN seg.trip_id = 1 AND seg.segment_order IN (2, 3) AND s.seat_number IN ('A3', 'A4', 'G8') THEN 'BOOKED'
+           WHEN seg.trip_id = 2 AND seg.segment_order IN (1, 2, 3) AND s.seat_number IN ('C2', 'C7', 'C12') THEN 'BOOKED'
+           WHEN seg.trip_id = 3 AND seg.segment_order = 1 AND s.seat_number IN ('A1', 'G1') THEN 'HOLD'
+           WHEN seg.trip_id = 4 AND s.seat_number IN ('C4', 'C5', 'C6') THEN 'BOOKED'
+           WHEN seg.trip_id = 5 AND seg.segment_order = 2 AND s.seat_number IN ('A9', 'G2', 'G3') THEN 'BLOCKED'
+           ELSE 'AVAILABLE'
+       END
+FROM `trip_segments` seg
+JOIN `trips` t ON t.id = seg.trip_id
+JOIN `carriages` c ON c.train_id = t.train_id
+JOIN `seats` s ON s.carriage_id = c.id
+LEFT JOIN `tickets` tk ON tk.trip_id = seg.trip_id AND tk.seat_id = s.id
+WHERE seg.trip_id IN (SELECT trip_id FROM `tmp_demo_trips`)
+ON DUPLICATE KEY UPDATE
+    `status` = IF(`seat_segment_inventory`.`status` = 'AVAILABLE', VALUES(`status`), `seat_segment_inventory`.`status`);
+
+DROP TEMPORARY TABLE IF EXISTS `tmp_demo_segment_prices`;
+DROP TEMPORARY TABLE IF EXISTS `tmp_demo_trip_stops`;
+DROP TEMPORARY TABLE IF EXISTS `tmp_demo_trips`;
+
 INSERT INTO `activity_items` (`activity_id`, `name`, `stock_initial`, `stock_available`, `price_original`, `price_flash`, `sale_start_time`, `sale_end_time`, `status`) VALUES 
 (1, 'Vé Tết Chặng HN-SG', 100, 100, 1500000, 999000, '2026-01-01 12:00:00', '2026-01-01 13:00:00', 1);
 
--- Dev seed normalization: keep homepage labels readable even when imported from shells with a non-UTF8 code page.
-UPDATE stations SET name = 'Ga Ha Noi', location = 'Ha Noi' WHERE code = 'HAN';
-UPDATE stations SET name = 'Ga Da Nang', location = 'Da Nang' WHERE code = 'DAN';
-UPDATE stations SET name = 'Ga Sai Gon', location = 'TP. Ho Chi Minh' WHERE code = 'SGN';
+-- Dev seed display labels.
+UPDATE stations SET name = 'Ga Hà Nội', location = 'Hà Nội' WHERE code = 'HAN';
+UPDATE stations SET name = 'Ga Đà Nẵng', location = 'Đà Nẵng' WHERE code = 'DAN';
+UPDATE stations SET name = 'Ga Sài Gòn', location = 'TP. Hồ Chí Minh' WHERE code = 'SGN';
+UPDATE stations SET name = 'Ga Vinh', location = 'Nghệ An' WHERE code = 'VIN';
+UPDATE stations SET name = 'Ga Huế', location = 'Thừa Thiên Huế' WHERE code = 'HUE';
+UPDATE stations SET name = 'Ga Nha Trang', location = 'Khánh Hòa' WHERE code = 'NTR';
 
-UPDATE trains SET description = 'Tau hoa Thong Nhat Bac Nam' WHERE code = 'SE1';
-UPDATE trains SET description = 'Tau nhanh chat luong cao' WHERE code = 'SE3';
+UPDATE trains SET description = 'Tàu hỏa Thống Nhất Bắc Nam' WHERE code = 'SE1';
+UPDATE trains SET description = 'Tàu nhanh chất lượng cao' WHERE code = 'SE3';
+UPDATE trains SET description = 'Tàu nhanh Bắc Nam bổ sung' WHERE code = 'SE5';
+UPDATE trains SET description = 'Tàu thống nhất đêm bổ sung' WHERE code = 'TN1';
+UPDATE trains SET description = 'Tàu địa phương kết nối đô thị' WHERE code LIKE 'SUB%';
 UPDATE trains SET category = 'SE_TN' WHERE code IN ('SE1', 'SE5', 'TN1');
 UPDATE trains SET category = 'HIGH_QUALITY' WHERE code = 'SE3';
 UPDATE trains SET category = 'SUBURBAN' WHERE code LIKE 'SUB%';
 
-UPDATE carriage_types SET name = 'Ghe mem dieu hoa', description = 'Cho ngoi boc da thoai mai' WHERE code = 'SOFT_SEAT';
-UPDATE carriage_types SET name = 'Ghe cung', description = 'Cho ngoi tiet kiem' WHERE code = 'HARD_SEAT';
-UPDATE carriage_types SET name = 'Giuong nam khoang 6', description = 'Khoang 6 giuong nam tang' WHERE code = 'SLEEPER_6';
-UPDATE carriage_types SET name = 'Giuong nam khoang 4', description = 'Khoang 4 giuong nam chat luong cao' WHERE code = 'SLEEPER_4';
+UPDATE carriage_types SET name = 'Ghế mềm điều hòa', description = 'Chỗ ngồi bọc da thoải mái' WHERE code = 'SOFT_SEAT';
+UPDATE carriage_types SET name = 'Ghế cứng', description = 'Chỗ ngồi tiết kiệm' WHERE code = 'HARD_SEAT';
+UPDATE carriage_types SET name = 'Giường nằm khoang 6', description = 'Khoang 6 giường nằm tầng' WHERE code = 'SLEEPER_6';
+UPDATE carriage_types SET name = 'Giường nằm khoang 4', description = 'Khoang 4 giường nằm chất lượng cao' WHERE code = 'SLEEPER_4';
 
-UPDATE carriages SET name = 'Toa 1 - Ghe Mem' WHERE id = 1;
-UPDATE carriages SET name = 'Toa 2 - Giuong Nam' WHERE id = 2;
-UPDATE carriages SET name = 'Toa 1 - Ghe Cung' WHERE id = 3;
+UPDATE carriages SET name = 'Toa 1 - Ghế mềm' WHERE id = 1;
+UPDATE carriages SET name = 'Toa 2 - Giường nằm' WHERE id = 2;
+UPDATE carriages SET name = 'Toa 1 - Ghế cứng' WHERE id = 3;
 
 CREATE TABLE IF NOT EXISTS `promotions` (
     `id` BIGINT AUTO_INCREMENT PRIMARY KEY,
@@ -759,14 +1272,14 @@ CREATE TABLE IF NOT EXISTS `promotions` (
 INSERT INTO `promotions`
 (`title`, `description`, `code`, `discount_type`, `discount_value`, `max_discount_amount`, `min_order_amount`, `starts_at`, `ends_at`, `conditions`, `route`, `categories`, `usage_limit`, `used_count`, `ease_score`, `status`)
 VALUES
-('Ve Tet sum vay', 'Uu dai som cho cac chuyen tau Tet tren truc Bac - Nam.', 'TETSUMVAY', 'percent', 18, 250000, 500000, '2026-05-01', '2027-01-20', 'Ap dung cho don tu 2 ve, dat truoc ngay khoi hanh toi thieu 7 ngay.', 'Ga Sai Gon -> Ga Ha Noi', 'tet,popularRoute', 1000, 0, 84, 'ACTIVE'),
-('Sinh vien len tau', 'Tiet kiem cho sinh vien khi dat ve ghe ngoi hoac giuong nam.', 'SVRAIL', 'percent', 15, 150000, 200000, '2026-05-01', '2026-08-31', 'Can xuat trinh the sinh vien con hieu luc khi len tau.', 'Ga Ha Noi -> Vinh', 'student', 1500, 0, 78, 'ACTIVE'),
-('Di ve tiet kiem hon', 'Giam truc tiep cho hanh trinh khu hoi trong cung mot don.', 'KHUTHOI', 'amount', 120000, NULL, 500000, '2026-04-15', '2026-07-15', 'Ap dung khi dat toi thieu 1 ve chieu di va 1 ve chieu ve.', NULL, 'roundTrip', 800, 0, 88, 'ACTIVE'),
-('Thanh toan online cuoi tuan', 'Mien phi dich vu khi thanh toan bang vi dien tu hoac the noi dia.', 'PAYONLINE', 'serviceFee', 35000, NULL, 0, '2026-05-01', '2026-05-08', 'Ap dung tu thu Sau den Chu nhat cho don thanh toan online.', NULL, 'onlinePayment,expiring', 1200, 0, 96, 'ACTIVE'),
-('Gia dinh chon khoang', 'Uu dai cho nhom gia dinh dat khoang 4 hoac khoang 6.', 'GIADINH', 'amount', 200000, NULL, 1000000, '2026-05-10', '2026-09-30', 'Don tu 4 hanh khach, ap dung cho khoang 4 hoac khoang 6.', 'Ga Da Nang -> Ga Sai Gon', 'group', 500, 0, 72, 'ACTIVE'),
-('Tuyen bien mien Trung', 'Giam manh cho tuyen Sai Gon - Da Nang trong mua du lich.', 'BIENXANH', 'percent', 20, 220000, 300000, '2026-05-01', '2026-06-30', 'Ap dung cho ve tu thu Hai den thu Nam, khong cong don uu dai.', 'Ga Sai Gon -> Ga Da Nang', 'popularRoute', 700, 0, 81, 'ACTIVE'),
-('Chot ve thang 5', 'Uu dai ngan ngay cho cac chuyen con nhieu ghe trong.', 'MAYLAST', 'amount', 80000, NULL, 300000, '2026-05-01', '2026-05-06', 'So luong ma co han, ap dung cho don tu 300.000d.', NULL, 'expiring,onlinePayment', 400, 0, 90, 'ACTIVE'),
-('Nhom ban mua he', 'Cang dong cang tiet kiem cho nhom tu 6 hanh khach.', 'NHOMHE', 'percent', 12, 180000, 600000, '2026-05-15', '2026-08-15', 'Ap dung cho don tu 6 ve cung chuyen, cung hang ghe.', NULL, 'group', 600, 0, 69, 'ACTIVE')
+('Vé Tết sum vầy', 'Ưu đãi sớm cho các chuyến tàu Tết trên trục Bắc - Nam.', 'TETSUMVAY', 'percent', 18, 250000, 500000, '2026-05-01', '2027-01-20', 'Áp dụng cho đơn từ 2 vé, đặt trước ngày khởi hành tối thiểu 7 ngày.', 'Ga Sài Gòn -> Ga Hà Nội', 'tet,popularRoute', 1000, 0, 84, 'ACTIVE'),
+('Sinh viên lên tàu', 'Tiết kiệm cho sinh viên khi đặt vé ghế ngồi hoặc giường nằm.', 'SVRAIL', 'percent', 15, 150000, 200000, '2026-05-01', '2026-08-31', 'Cần xuất trình thẻ sinh viên còn hiệu lực khi lên tàu.', 'Ga Hà Nội -> Vinh', 'student', 1500, 0, 78, 'ACTIVE'),
+('Đi về tiết kiệm hơn', 'Giảm trực tiếp cho hành trình khứ hồi trong cùng một đơn.', 'KHUTHOI', 'amount', 120000, NULL, 500000, '2026-04-15', '2026-07-15', 'Áp dụng khi đặt tối thiểu 1 vé chiều đi và 1 vé chiều về.', NULL, 'roundTrip', 800, 0, 88, 'ACTIVE'),
+('Thanh toán online cuối tuần', 'Miễn phí dịch vụ khi thanh toán bằng ví điện tử hoặc thẻ nội địa.', 'PAYONLINE', 'serviceFee', 35000, NULL, 0, '2026-05-01', '2026-05-08', 'Áp dụng từ thứ Sáu đến Chủ nhật cho đơn thanh toán online.', NULL, 'onlinePayment,expiring', 1200, 0, 96, 'ACTIVE'),
+('Gia đình chọn khoang', 'Ưu đãi cho nhóm gia đình đặt khoang 4 hoặc khoang 6.', 'GIADINH', 'amount', 200000, NULL, 1000000, '2026-05-10', '2026-09-30', 'Đơn từ 4 hành khách, áp dụng cho khoang 4 hoặc khoang 6.', 'Ga Đà Nẵng -> Ga Sài Gòn', 'group', 500, 0, 72, 'ACTIVE'),
+('Tuyến biển miền Trung', 'Giảm mạnh cho tuyến Sài Gòn - Đà Nẵng trong mùa du lịch.', 'BIENXANH', 'percent', 20, 220000, 300000, '2026-05-01', '2026-06-30', 'Áp dụng cho vé từ thứ Hai đến thứ Năm, không cộng dồn ưu đãi.', 'Ga Sài Gòn -> Ga Đà Nẵng', 'popularRoute', 700, 0, 81, 'ACTIVE'),
+('Chốt vé tháng 5', 'Ưu đãi ngắn ngày cho các chuyến còn nhiều ghế trống.', 'MAYLAST', 'amount', 80000, NULL, 300000, '2026-05-01', '2026-05-06', 'Số lượng mã có hạn, áp dụng cho đơn từ 300.000đ.', NULL, 'expiring,onlinePayment', 400, 0, 90, 'ACTIVE'),
+('Nhóm bạn mùa hè', 'Càng đông càng tiết kiệm cho nhóm từ 6 hành khách.', 'NHOMHE', 'percent', 12, 180000, 600000, '2026-05-15', '2026-08-15', 'Áp dụng cho đơn từ 6 vé cùng chuyến, cùng hạng ghế.', NULL, 'group', 600, 0, 69, 'ACTIVE')
 ON DUPLICATE KEY UPDATE
     title = VALUES(title),
     description = VALUES(description),

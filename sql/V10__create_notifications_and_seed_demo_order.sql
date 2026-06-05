@@ -5,7 +5,7 @@ CREATE TABLE IF NOT EXISTS `notifications` (
     `user_id` BIGINT NOT NULL,
     `title` VARCHAR(255) NOT NULL,
     `content` TEXT,
-    `type` ENUM('BOOKING_CONFIRMED', 'BOOKING_CANCELLED', 'BOOKING_EXPIRED', 'PAYMENT_SUCCESS', 'SYSTEM') NOT NULL,
+    `type` ENUM('BOOKING_CONFIRMED', 'BOOKING_CANCELLED', 'BOOKING_EXPIRED', 'BOOKING_FAILED', 'PAYMENT_SUCCESS', 'PAYMENT_FAILED', 'SYSTEM') NOT NULL,
     `reference_id` BIGINT NOT NULL COMMENT 'ID tham chieu, thuong la bookingId',
     `is_read` TINYINT(1) NOT NULL DEFAULT 0,
     `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -15,8 +15,8 @@ CREATE TABLE IF NOT EXISTS `notifications` (
     INDEX `idx_notifications_created_at` (`created_at`)
 ) ENGINE = InnoDB DEFAULT CHARSET=utf8mb4;
 
-INSERT INTO `bookings` (`id`, `user_id`, `total_price`, `status`, `expired_at`, `created_at`, `updated_at`)
-SELECT 1, 3, 1000000, 'CONFIRMED', '2026-05-01 07:00:00', NOW(), NOW()
+INSERT INTO `bookings` (`id`, `order_number`, `storage_month`, `user_id`, `original_price`, `discount_amount`, `total_price`, `status`, `expired_at`, `created_at`, `updated_at`)
+SELECT 1, 'ORD-20260501-000001', '202605', 3, 1000000, 0, 1000000, 'CONFIRMED', '2026-05-01 07:00:00', NOW(), NOW()
 WHERE NOT EXISTS (SELECT 1 FROM `bookings` WHERE `id` = 1);
 
 INSERT INTO `booking_details` (`booking_id`, `ticket_id`, `passenger_name`, `passenger_id_card`, `passenger_type`)

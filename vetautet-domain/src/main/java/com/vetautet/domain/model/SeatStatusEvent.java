@@ -15,4 +15,7 @@ public class SeatStatusEvent {
     private String seatNumber;
     private String status; // AVAILABLE, HOLD, BOOKED
     private Long bookingId;
+    private Long departureStationId;
+    private Long arrivalStationId;
+    private String segmentIds;
 }

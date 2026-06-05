@@ -4,6 +4,7 @@ import com.vetautet.domain.gateway.MomoPaymentGateway;
 import com.vetautet.domain.model.MomoCreatePaymentCommand;
 import com.vetautet.domain.model.MomoCreatePaymentResult;
 import com.vetautet.domain.model.MomoPaymentResult;
+import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.web.client.RestTemplateBuilder;
 import org.springframework.stereotype.Component;
@@ -55,6 +56,7 @@ public class MomoPaymentGatewayImpl implements MomoPaymentGateway {
     }
 
     @Override
+    @CircuitBreaker(name = "momoPayment")
     public MomoCreatePaymentResult createPayment(MomoCreatePaymentCommand command) {
         validateConfig();
 

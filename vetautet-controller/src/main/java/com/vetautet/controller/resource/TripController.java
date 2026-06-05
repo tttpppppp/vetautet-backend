@@ -9,6 +9,8 @@ import com.vetautet.application.dto.PopularRouteResponse;
 import com.vetautet.application.dto.TrainCategoryResponse;
 import com.vetautet.application.dto.TripResponse;
 import com.vetautet.application.service.trip.TripAppService;
+import com.vetautet.application.service.trip.TripScheduleAppService;
+import io.github.resilience4j.ratelimiter.annotation.RateLimiter;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.format.annotation.DateTimeFormat;
@@ -29,11 +31,14 @@ public class TripController {
 
     private static final Duration PUBLIC_TRIP_JSON_TTL = Duration.ofMinutes(10);
     private static final Duration SEARCH_JSON_TTL = Duration.ofSeconds(60);
-    private static final Duration LOCAL_PUBLIC_TRIP_JSON_TTL = Duration.ofSeconds(2);
-    private static final Duration LOCAL_SEARCH_JSON_TTL = Duration.ofSeconds(2);
+    private static final Duration LOCAL_PUBLIC_TRIP_JSON_TTL = Duration.ofMinutes(10);
+    private static final Duration LOCAL_SEARCH_JSON_TTL = Duration.ofSeconds(5);
 
     @Autowired
     private TripAppService tripAppService;
+
+    @Autowired
+    private TripScheduleAppService tripScheduleAppService;
 
     @Autowired
     private ObjectMapper objectMapper;
@@ -56,50 +61,114 @@ public class TripController {
     }
 
     @GetMapping("/categories")
-    public ResponseEntity<List<TrainCategoryResponse>> getTrainCategories() {
-        return ResponseEntity.ok(tripAppService.getTrainCategories());
+    public ResponseEntity<byte[]> getTrainCategories() {
+        return cachedJson(
+                TripCacheKeys.HTTP_TRIPS_CATEGORIES,
+                PUBLIC_TRIP_JSON_TTL,
+                LOCAL_PUBLIC_TRIP_JSON_TTL,
+                tripAppService::getTrainCategories
+        );
     }
 
     @GetMapping("/popular")
-    public ResponseEntity<List<TripResponse>> getPopularTrips(
+    public ResponseEntity<byte[]> getPopularTrips(
             @RequestParam(value = "limit", defaultValue = "6") int limit) {
-        return ResponseEntity.ok(tripAppService.getPopularTrips(limit));
+        return cachedJson(
+                TripCacheKeys.httpPopular(limit),
+                PUBLIC_TRIP_JSON_TTL,
+                LOCAL_PUBLIC_TRIP_JSON_TTL,
+                () -> tripAppService.getPopularTrips(limit)
+        );
     }
 
     @GetMapping("/popular-routes")
-    public ResponseEntity<List<PopularRouteResponse>> getPopularRoutes(
+    public ResponseEntity<byte[]> getPopularRoutes(
             @RequestParam(value = "limit", defaultValue = "6") int limit) {
-        return ResponseEntity.ok(tripAppService.getPopularRoutes(limit));
+        return cachedJson(
+                TripCacheKeys.httpPopularRoutes(limit),
+                PUBLIC_TRIP_JSON_TTL,
+                LOCAL_PUBLIC_TRIP_JSON_TTL,
+                () -> tripAppService.getPopularRoutes(limit)
+        );
     }
 
     @GetMapping("/popular-destinations")
-    public ResponseEntity<List<PopularDestinationResponse>> getPopularDestinations(
+    public ResponseEntity<byte[]> getPopularDestinations(
             @RequestParam(value = "limit", defaultValue = "6") int limit) {
-        return ResponseEntity.ok(tripAppService.getPopularDestinations(limit));
+        return cachedJson(
+                TripCacheKeys.httpPopularDestinations(limit),
+                PUBLIC_TRIP_JSON_TTL,
+                LOCAL_PUBLIC_TRIP_JSON_TTL,
+                () -> tripAppService.getPopularDestinations(limit)
+        );
     }
 
     @GetMapping("/upcoming")
-    public ResponseEntity<List<TripResponse>> getUpcomingDepartures(
+    public ResponseEntity<byte[]> getUpcomingDepartures(
             @RequestParam(value = "limit", defaultValue = "6") int limit) {
-        return ResponseEntity.ok(tripAppService.getUpcomingDepartures(limit));
+        return cachedJson(
+                TripCacheKeys.httpUpcoming(limit),
+                PUBLIC_TRIP_JSON_TTL,
+                LOCAL_PUBLIC_TRIP_JSON_TTL,
+                () -> tripAppService.getUpcomingDepartures(limit)
+        );
+    }
+
+    @GetMapping("/schedules")
+    public ResponseEntity<?> getSchedules(
+            @RequestParam(value = "date", required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date,
+            @RequestParam(value = "station", required = false) String station,
+            @RequestParam(value = "limit", defaultValue = "6") int limit,
+            HttpServletRequest request) {
+        String queryString = request.getQueryString() == null ? "" : request.getQueryString();
+        return cachedJson(
+                TripCacheKeys.httpSchedules(cacheKeyHash(queryString)),
+                SEARCH_JSON_TTL,
+                LOCAL_SEARCH_JSON_TTL,
+                () -> tripAppService.getSchedules(date, station, limit)
+        );
     }
 
     @GetMapping("/{id}")
     public ResponseEntity<?> getTripById(
             @PathVariable("id") Long id,
-            @RequestParam(value = "bookingId", required = false) Long bookingId) {
-        if (bookingId == null) {
+            @RequestParam(value = "bookingId", required = false) Long bookingId,
+            @RequestParam(value = "departureStationId", required = false) Long departureStationId,
+            @RequestParam(value = "arrivalStationId", required = false) Long arrivalStationId) {
+        if (bookingId == null && departureStationId == null && arrivalStationId == null) {
             return cachedJson(
                     TripCacheKeys.httpTrip(id),
                     PUBLIC_TRIP_JSON_TTL,
                     LOCAL_PUBLIC_TRIP_JSON_TTL,
-                    () -> tripAppService.getTripById(id, null)
+                    () -> tripAppService.getTripById(id, null, null, null)
             );
         }
-        return ResponseEntity.ok(tripAppService.getTripById(id, bookingId));
+        return ResponseEntity.ok(tripAppService.getTripById(id, bookingId, departureStationId, arrivalStationId));
+    }
+
+    @GetMapping("/{id}/itinerary")
+    public ResponseEntity<?> getTripItinerary(@PathVariable("id") Long id) {
+        return ResponseEntity.ok(tripScheduleAppService.getItinerary(id));
+    }
+
+    @GetMapping("/{id}/fare")
+    public ResponseEntity<?> quoteTripFare(
+            @PathVariable("id") Long id,
+            @RequestParam("departureStationId") Long departureStationId,
+            @RequestParam("arrivalStationId") Long arrivalStationId,
+            @RequestParam("carriageTypeId") Long carriageTypeId,
+            @RequestParam(value = "passengerType", defaultValue = "ADULT") String passengerType) {
+        return ResponseEntity.ok(tripScheduleAppService.quoteFare(
+                id,
+                departureStationId,
+                arrivalStationId,
+                carriageTypeId,
+                passengerType
+        ));
     }
 
     @GetMapping("/search")
+    @RateLimiter(name = "tripSearch")
     public ResponseEntity<?> searchTrips(
             @RequestParam(value = "departure", required = false) String departure,
             @RequestParam(value = "arrival", required = false) String arrival,
@@ -119,16 +188,16 @@ public class TripController {
         );
     }
 
-    private ResponseEntity<String> cachedJson(String cacheKey, Duration redisTtl, Duration localTtl, Supplier<Object> supplier) {
-        String json = tripJsonCacheService.get(cacheKey, redisTtl, localTtl, () -> toJson(supplier.get()));
+    private ResponseEntity<byte[]> cachedJson(String cacheKey, Duration redisTtl, Duration localTtl, Supplier<Object> supplier) {
+        byte[] json = tripJsonCacheService.getBytes(cacheKey, redisTtl, localTtl, () -> toJsonBytes(supplier.get()));
         return ResponseEntity.ok()
                 .contentType(MediaType.APPLICATION_JSON)
                 .body(json);
     }
 
-    private String toJson(Object value) {
+    private byte[] toJsonBytes(Object value) {
         try {
-            return objectMapper.writeValueAsString(value);
+            return objectMapper.writeValueAsBytes(value);
         } catch (JsonProcessingException e) {
             throw new RuntimeException("Cannot serialize trip response", e);
         }

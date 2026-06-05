@@ -9,24 +9,29 @@ import com.vetautet.application.dto.VnpayReturnResponse;
 import com.vetautet.application.service.order.BookingAppService;
 import com.vetautet.application.service.payment.PaymentAppService;
 import com.vetautet.domain.gateway.MomoPaymentGateway;
+import com.vetautet.domain.gateway.OutboxEventGateway;
 import com.vetautet.domain.gateway.VnpayPaymentGateway;
 import com.vetautet.domain.model.Booking;
+import com.vetautet.domain.model.BookingSagaEvent;
 import com.vetautet.domain.model.MomoCreatePaymentCommand;
 import com.vetautet.domain.model.MomoCreatePaymentResult;
 import com.vetautet.domain.model.MomoPaymentResult;
 import com.vetautet.domain.model.Payment;
+import com.vetautet.domain.model.PaymentFailedEvent;
 import com.vetautet.domain.model.User;
 import com.vetautet.domain.model.VnpayCreatePaymentCommand;
 import com.vetautet.domain.model.VnpayCreatePaymentResult;
 import com.vetautet.domain.model.VnpayPaymentResult;
 import com.vetautet.domain.service.BookingDomainService;
 import com.vetautet.domain.service.PaymentDomainService;
+import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Map;
 
 @Service
@@ -34,31 +39,37 @@ public class PaymentAppServiceImpl implements PaymentAppService {
 
     private static final long MOMO_MIN_AMOUNT = 1000L;
     private static final long VNPAY_MIN_AMOUNT = 1000L;
+    private static final String BOOKING_SAGA_EVENTS_TOPIC = "booking-saga-events";
+    private static final String PAYMENT_FAILED_TOPIC = "payment-failed";
 
     private final BookingDomainService bookingDomainService;
     private final BookingAppService bookingAppService;
     private final PaymentDomainService paymentDomainService;
     private final MomoPaymentGateway momoPaymentGateway;
     private final VnpayPaymentGateway vnpayPaymentGateway;
+    private final SimpMessagingTemplate messagingTemplate;
+    private final OutboxEventGateway outboxEventGateway;
 
     public PaymentAppServiceImpl(BookingDomainService bookingDomainService,
-                                 BookingAppService bookingAppService,
-                                 PaymentDomainService paymentDomainService,
-                                 MomoPaymentGateway momoPaymentGateway,
-                                 VnpayPaymentGateway vnpayPaymentGateway) {
+                                  BookingAppService bookingAppService,
+                                  PaymentDomainService paymentDomainService,
+                                  MomoPaymentGateway momoPaymentGateway,
+                                  VnpayPaymentGateway vnpayPaymentGateway,
+                                  SimpMessagingTemplate messagingTemplate,
+                                  OutboxEventGateway outboxEventGateway) {
         this.bookingDomainService = bookingDomainService;
         this.bookingAppService = bookingAppService;
         this.paymentDomainService = paymentDomainService;
         this.momoPaymentGateway = momoPaymentGateway;
         this.vnpayPaymentGateway = vnpayPaymentGateway;
+        this.messagingTemplate = messagingTemplate;
+        this.outboxEventGateway = outboxEventGateway;
     }
 
     @Override
     public MomoCreatePaymentResponse createMomoPayment(Long bookingId) {
         Booking booking = bookingDomainService.getBookingById(bookingId);
-        if (!"PENDING".equalsIgnoreCase(booking.getStatus())) {
-            throw new RuntimeException("Chi co the tao thanh toan MoMo cho booking dang PENDING");
-        }
+        ensureBookingCanStartPayment(booking, "MoMo");
 
         long amount = booking.getTotalPrice()
                 .setScale(0, RoundingMode.HALF_UP)
@@ -73,9 +84,9 @@ public class PaymentAppServiceImpl implements PaymentAppService {
                         .bookingId(booking.getId())
                         .amount(amount)
                         .orderInfo("Thanh toan don dat ve #" + booking.getId())
-                        .customerName(user != null ? user.getName() : null)
-                        .customerEmail(user != null ? user.getEmail() : null)
-                        .customerPhone(user != null ? user.getPhone() : null)
+                        .customerName(firstNonBlank(booking.getContactName(), user != null ? user.getName() : null))
+                        .customerEmail(firstNonBlank(booking.getContactEmail(), user != null ? user.getEmail() : null))
+                        .customerPhone(firstNonBlank(booking.getContactPhone(), user != null ? user.getPhone() : null))
                         .build()
         );
         savePendingPayment(booking.getId(), "MOMO", BigDecimal.valueOf(result.getAmount()), result.getOrderId());
@@ -97,9 +108,7 @@ public class PaymentAppServiceImpl implements PaymentAppService {
     @Override
     public VnpayCreatePaymentResponse createVnpayPayment(Long bookingId, String clientIp) {
         Booking booking = bookingDomainService.getBookingById(bookingId);
-        if (!"PENDING".equalsIgnoreCase(booking.getStatus())) {
-            throw new RuntimeException("Chi co the tao thanh toan VNPAY cho booking dang PENDING");
-        }
+        ensureBookingCanStartPayment(booking, "VNPAY");
 
         long amount = normalizeAmount(booking.getTotalPrice());
         if (amount < VNPAY_MIN_AMOUNT) {
@@ -166,12 +175,15 @@ public class PaymentAppServiceImpl implements PaymentAppService {
             updatePaymentResult(bookingId, "MOMO", "SUCCESS", BigDecimal.valueOf(request.getAmount()),
                     request.getTransId() != null ? request.getTransId().toString() : request.getOrderId());
             if (!"CONFIRMED".equalsIgnoreCase(booking.getStatus())) {
-                bookingAppService.confirmPayment(bookingId);
+                confirmPaidBookingOrPublishSaga(bookingId, "MOMO_PAYMENT_CONFIRMED");
             }
             return new MomoIpnResponse(0, "Payment confirmed");
         }
 
-        updatePaymentResult(bookingId, "MOMO", "FAILED", BigDecimal.valueOf(request.getAmount()), request.getOrderId());
+        if (!hasPaymentStatus(bookingId, "FAILED")) {
+            updatePaymentResult(bookingId, "MOMO", "FAILED", BigDecimal.valueOf(request.getAmount()), request.getOrderId());
+            reverseBookingAfterPaymentFailure(bookingId, "MOMO_PAYMENT_FAILED", request.getMessage());
+        }
         return new MomoIpnResponse(0, "Payment result received: " + request.getMessage());
     }
 
@@ -202,13 +214,16 @@ public class PaymentAppServiceImpl implements PaymentAppService {
             updatePaymentResult(bookingId, "VNPAY", "SUCCESS", BigDecimal.valueOf(paidAmount),
                     resolveVnpayTransactionId(params));
             if (!"CONFIRMED".equalsIgnoreCase(booking.getStatus())) {
-                bookingAppService.confirmPayment(bookingId);
+                confirmPaidBookingOrPublishSaga(bookingId, "VNPAY_PAYMENT_CONFIRMED");
             }
             return buildVnpayResponse(params, bookingId, paidAmount, "00", "Payment confirmed");
         }
 
-        updatePaymentResult(bookingId, "VNPAY", "FAILED", BigDecimal.valueOf(paidAmount),
-                resolveVnpayTransactionId(params));
+        if (!hasPaymentStatus(bookingId, "FAILED")) {
+            updatePaymentResult(bookingId, "VNPAY", "FAILED", BigDecimal.valueOf(paidAmount),
+                    resolveVnpayTransactionId(params));
+            reverseBookingAfterPaymentFailure(bookingId, "VNPAY_PAYMENT_FAILED", "Payment result received");
+        }
         return buildVnpayResponse(params, bookingId, paidAmount, responseCode, "Payment result received");
     }
 
@@ -248,10 +263,13 @@ public class PaymentAppServiceImpl implements PaymentAppService {
             if ("00".equals(responseCode) && "00".equals(transactionStatus)) {
                 updatePaymentResult(bookingId, "VNPAY", "SUCCESS", BigDecimal.valueOf(paidAmount),
                         resolveVnpayTransactionId(params));
-                bookingAppService.confirmPayment(bookingId);
+                confirmPaidBookingOrPublishSaga(bookingId, "VNPAY_PAYMENT_CONFIRMED");
             } else {
-                updatePaymentResult(bookingId, "VNPAY", "FAILED", BigDecimal.valueOf(paidAmount),
-                        resolveVnpayTransactionId(params));
+                if (!hasPaymentStatus(bookingId, "FAILED")) {
+                    updatePaymentResult(bookingId, "VNPAY", "FAILED", BigDecimal.valueOf(paidAmount),
+                            resolveVnpayTransactionId(params));
+                    reverseBookingAfterPaymentFailure(bookingId, "VNPAY_PAYMENT_FAILED", "Payment result received");
+                }
             }
 
             return new VnpayIpnResponse("00", "Confirm Success");
@@ -329,12 +347,119 @@ public class PaymentAppServiceImpl implements PaymentAppService {
         paymentDomainService.savePayment(payment);
     }
 
+    private boolean hasPaymentStatus(Long bookingId, String status) {
+        Payment payment = paymentDomainService.findLatestByBookingIdOrNull(bookingId);
+        return payment != null && status.equalsIgnoreCase(payment.getStatus());
+    }
+
+    private void ensureBookingCanStartPayment(Booking booking, String method) {
+        if (booking == null || booking.getId() == null) {
+            throw new RuntimeException("Booking khong hop le");
+        }
+        if (!"PENDING".equalsIgnoreCase(booking.getStatus())) {
+            throw new RuntimeException("Chi co the tao thanh toan " + method + " cho booking dang PENDING");
+        }
+        if (booking.getExpiredAt() != null && !booking.getExpiredAt().isAfter(LocalDateTime.now())) {
+            bookingAppService.updateBookingStatus(booking.getId(), "EXPIRED");
+            throw new RuntimeException("Don dat ve da het han giu cho, vui long chon ghe lai");
+        }
+    }
+
+    private void confirmPaidBookingOrPublishSaga(Long bookingId, String step) {
+        try {
+            Booking booking = bookingDomainService.getBookingById(bookingId);
+            if (!"PENDING".equalsIgnoreCase(booking.getStatus())) {
+                throw new RuntimeException("Booking khong con o trang thai PENDING");
+            }
+            if (booking.getExpiredAt() != null && !booking.getExpiredAt().isAfter(LocalDateTime.now())) {
+                bookingAppService.updateBookingStatus(bookingId, "EXPIRED");
+                throw new RuntimeException("Booking da het han giu cho");
+            }
+            bookingAppService.confirmPayment(bookingId);
+            publishBookingSagaEvent(bookingId, step, "COMPLETED", "Payment confirmed and booking completed");
+        } catch (RuntimeException ex) {
+            publishBookingSagaEvent(bookingId, step, "FAILED", safeMessage(ex));
+            throw ex;
+        }
+    }
+
+    private void reverseBookingAfterPaymentFailure(Long bookingId, String step, String reason) {
+        PaymentFailedEvent event = PaymentFailedEvent.builder()
+                .bookingId(bookingId)
+                .step(step)
+                .reason(safeMessage(reason))
+                .occurredAt(LocalDateTime.now())
+                .build();
+
+        outboxEventGateway.enqueue(
+                PAYMENT_FAILED_TOPIC,
+                bookingId != null ? bookingId.toString() : step,
+                "PAYMENT_FAILED",
+                "BOOKING",
+                bookingId != null ? bookingId.toString() : null,
+                event
+        );
+        System.out.println(">>> [OUTBOX ENQUEUED] PAYMENT_FAILED topic=" + PAYMENT_FAILED_TOPIC
+                + " bookingId=" + bookingId);
+    }
+
+    private void publishBookingSagaEvent(Long bookingId, String step, String status, String reason) {
+        BookingSagaEvent event = BookingSagaEvent.builder()
+                .bookingId(bookingId)
+                .ticketIds(List.of())
+                .step(step)
+                .status(status)
+                .reason(reason)
+                .occurredAt(LocalDateTime.now())
+                .build();
+
+        try {
+            messagingTemplate.convertAndSend("/topic/bookings/saga", event);
+        } catch (Exception ex) {
+            System.err.println(">>> [SAGA WS SKIPPED] " + step + " bookingId=" + bookingId
+                    + " error=" + ex.getMessage());
+        }
+
+        String key = bookingId != null ? bookingId.toString() : step;
+        String eventType = "BOOKING_SAGA_" + step + "_" + status;
+        outboxEventGateway.enqueue(
+                BOOKING_SAGA_EVENTS_TOPIC,
+                key,
+                eventType,
+                "BOOKING",
+                bookingId != null ? bookingId.toString() : null,
+                event
+        );
+        System.out.println(">>> [OUTBOX ENQUEUED] " + eventType + " topic=" + BOOKING_SAGA_EVENTS_TOPIC
+                + " bookingId=" + bookingId);
+    }
+
+    private String safeMessage(Exception ex) {
+        return ex == null || ex.getMessage() == null ? "unknown" : ex.getMessage();
+    }
+
+    private String safeMessage(String message) {
+        return message == null || message.isBlank() ? "unknown" : message;
+    }
+
+    private String firstNonBlank(String... values) {
+        if (values == null) {
+            return null;
+        }
+        for (String value : values) {
+            if (value != null && !value.isBlank()) {
+                return value.trim();
+            }
+        }
+        return null;
+    }
+
     private String resolveVnpayTransactionId(Map<String, String> params) {
         if (params == null) {
             return null;
         }
         String transactionNo = params.get("vnp_TransactionNo");
-        if (transactionNo != null && !transactionNo.isBlank()) {
+        if (transactionNo != null && !transactionNo.isBlank() && !"0".equals(transactionNo)) {
             return transactionNo;
         }
         return params.get("vnp_TxnRef");
@@ -349,11 +474,24 @@ public class PaymentAppServiceImpl implements PaymentAppService {
                 .code(code)
                 .message(message)
                 .bookingId(bookingId)
+                .orderNumber(resolveBookingOrderNumber(bookingId))
                 .vnpTxnRef(params != null ? params.get("vnp_TxnRef") : null)
                 .transactionNo(params != null ? params.get("vnp_TransactionNo") : null)
                 .responseCode(params != null ? params.get("vnp_ResponseCode") : null)
                 .transactionStatus(params != null ? params.get("vnp_TransactionStatus") : null)
                 .amount(amount)
                 .build();
+    }
+
+    private String resolveBookingOrderNumber(Long bookingId) {
+        if (bookingId == null) {
+            return null;
+        }
+        try {
+            Booking booking = bookingDomainService.getBookingById(bookingId);
+            return booking.getOrderNumber();
+        } catch (RuntimeException ex) {
+            return null;
+        }
     }
 }

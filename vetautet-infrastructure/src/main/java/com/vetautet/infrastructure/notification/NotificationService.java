@@ -5,6 +5,7 @@ import com.vetautet.domain.model.BookingDetail;
 import com.vetautet.domain.model.Notification;
 import com.vetautet.domain.model.UserNotificationEvent;
 import com.vetautet.domain.repository.NotificationRepository;
+import com.vetautet.domain.security.SensitiveDataCryptoService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Service;
@@ -21,6 +22,9 @@ public class NotificationService {
 
     @Autowired
     private SimpMessagingTemplate messagingTemplate;
+
+    @Autowired
+    private SensitiveDataCryptoService sensitiveDataCryptoService;
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public Notification sendBookingConfirmation(Booking booking) {
@@ -41,7 +45,9 @@ public class NotificationService {
                         : "N/A";
                 sb.append("  ").append(stt++).append(". ").append(seatInfo);
                 sb.append(" | Hanh khach: ").append(detail.getPassengerName());
-                sb.append(" | CCCD: ").append(detail.getPassengerIdCard()).append("\n");
+                sb.append(" | CCCD: ")
+                        .append(sensitiveDataCryptoService.decrypt(detail.getPassengerIdCard()))
+                        .append("\n");
             }
         }
 
@@ -85,6 +91,36 @@ public class NotificationService {
         pushToUser(userId, saved);
 
         System.out.println(">>> [NOTI] Saved and pushed booking cancellation to userId=" + userId);
+    }
+
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void sendPaymentFailure(Booking booking, String reason) {
+        Long userId = booking.getUser().getId();
+        if (notificationRepository.existsByUserIdAndTypeAndReferenceId(userId, "PAYMENT_FAILED", booking.getId())) {
+            System.out.println(">>> [NOTI] Payment failure notification already exists userId=" + userId
+                    + " bookingId=" + booking.getId());
+            return;
+        }
+
+        String title = "Thanh toan that bai #" + booking.getId();
+        String content = "Don hang #" + booking.getId()
+                + " thanh toan khong thanh cong. He thong da huy don va giai phong ghe."
+                + " Ly do: " + safeReason(reason);
+
+        Notification notification = Notification.builder()
+                .userId(userId)
+                .title(title)
+                .content(content)
+                .type("PAYMENT_FAILED")
+                .referenceId(booking.getId())
+                .isRead(false)
+                .build();
+        Notification saved = notificationRepository.save(notification);
+
+        pushToUser(userId, saved);
+
+        System.out.println(">>> [NOTI] Saved and pushed payment failure to userId=" + userId
+                + " bookingId=" + booking.getId());
     }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
@@ -147,5 +183,9 @@ public class NotificationService {
                 action.run();
             }
         });
+    }
+
+    private String safeReason(String reason) {
+        return reason == null || reason.isBlank() ? "Giao dich bi tu choi hoac bi huy." : reason;
     }
 }

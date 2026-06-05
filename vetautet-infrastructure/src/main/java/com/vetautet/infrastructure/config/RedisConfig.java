@@ -22,11 +22,17 @@ import org.springframework.data.redis.serializer.StringRedisSerializer;
 @EnableCaching
 public class RedisConfig {
 
-    @Value("${spring.data.redis.host}")
+    @Value("${spring.data.redis.host:localhost}")
     private String redisHost;
 
-    @Value("${spring.data.redis.port}")
+    @Value("${spring.data.redis.port:6379}")
     private int redisPort;
+
+    @Value("${spring.data.redis.sentinel.master:}")
+    private String redisSentinelMaster;
+
+    @Value("${spring.data.redis.sentinel.nodes:}")
+    private String redisSentinelNodes;
 
     @Bean
     public RedisTemplate<String, Object> redisTemplate(RedisConnectionFactory connectionFactory) {
@@ -58,8 +64,20 @@ public class RedisConfig {
     @Bean
     public RedissonClient redissonClient() {
         Config config = new Config();
-        config.useSingleServer()
-              .setAddress("redis://" + redisHost + ":" + redisPort);
+        if (redisSentinelMaster != null && !redisSentinelMaster.isBlank()
+                && redisSentinelNodes != null && !redisSentinelNodes.isBlank()) {
+            String[] sentinelAddresses = java.util.Arrays.stream(redisSentinelNodes.split(","))
+                    .map(String::trim)
+                    .filter(node -> !node.isBlank())
+                    .map(node -> node.startsWith("redis://") ? node : "redis://" + node)
+                    .toArray(String[]::new);
+            config.useSentinelServers()
+                    .setMasterName(redisSentinelMaster)
+                    .addSentinelAddress(sentinelAddresses);
+        } else {
+            config.useSingleServer()
+                  .setAddress("redis://" + redisHost + ":" + redisPort);
+        }
         return Redisson.create(config);
     }
 }

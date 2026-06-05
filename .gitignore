@@ -45,5 +45,8 @@ build/
 build_errors.txt
 run_error.log
 
+### Local application secrets ###
+vetautet-start/src/main/resources/application-local.yml
+
 ### Docker runtime data ###
 environment/data/

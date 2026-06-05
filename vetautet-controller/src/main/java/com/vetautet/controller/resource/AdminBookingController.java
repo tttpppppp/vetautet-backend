@@ -25,6 +25,11 @@ public class AdminBookingController {
         return ResponseEntity.ok(bookingAppService.getBookingById(id));
     }
 
+    @GetMapping("/order/{orderNumber}")
+    public ResponseEntity<BookingResponse> getByOrderNumber(@PathVariable String orderNumber) {
+        return ResponseEntity.ok(bookingAppService.getBookingByOrderNumber(orderNumber));
+    }
+
     @PutMapping("/{id}/status")
     public ResponseEntity<BookingResponse> updateStatus(@PathVariable Long id, @RequestBody Map<String, String> request) {
         String status = request.get("status");

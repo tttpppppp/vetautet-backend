@@ -4,6 +4,10 @@ networks:
   pre-event-network:
     driver: bridge
 
+volumes:
+  prometheus_data:
+  grafana_data:
+
 services:
   zookeeper:
     image: confluentinc/cp-zookeeper:7.4.0
@@ -61,8 +65,115 @@ services:
 
   redis:
     container_name: pre-event-redis
-    image: redislabs/redismod:latest
+    image: redis:7.2-alpine
+    command: ["redis-server", "--appendonly", "yes", "--protected-mode", "no"]
     ports:
       - "6319:6379"
+    networks:
+      pre-event-network:
+        aliases:
+          - redis-master
+
+  redis-slave-1:
+    container_name: pre-event-redis-slave-1
+    image: redis:7.2-alpine
+    depends_on:
+      - redis
+    command: ["redis-server", "--replicaof", "redis-master", "6379", "--appendonly", "yes", "--protected-mode", "no"]
+    ports:
+      - "6320:6379"
+    networks:
+      - pre-event-network
+
+  redis-slave-2:
+    container_name: pre-event-redis-slave-2
+    image: redis:7.2-alpine
+    depends_on:
+      - redis
+    command: ["redis-server", "--replicaof", "redis-master", "6379", "--appendonly", "yes", "--protected-mode", "no"]
+    ports:
+      - "6321:6379"
+    networks:
+      - pre-event-network
+
+  redis-sentinel-1:
+    container_name: pre-event-redis-sentinel-1
+    image: redis:7.2-alpine
+    depends_on:
+      - redis
+      - redis-slave-1
+      - redis-slave-2
+    command: ["/bin/sh", "-c", "cp /etc/redis-src/sentinel.conf /tmp/sentinel.conf && redis-server /tmp/sentinel.conf --sentinel"]
+    volumes:
+      - ./redis/sentinel-1.conf:/etc/redis-src/sentinel.conf:ro
+    ports:
+      - "26379:26379"
+    networks:
+      - pre-event-network
+
+  redis-sentinel-2:
+    container_name: pre-event-redis-sentinel-2
+    image: redis:7.2-alpine
+    depends_on:
+      - redis
+      - redis-slave-1
+      - redis-slave-2
+    command: ["/bin/sh", "-c", "cp /etc/redis-src/sentinel.conf /tmp/sentinel.conf && redis-server /tmp/sentinel.conf --sentinel"]
+    volumes:
+      - ./redis/sentinel-2.conf:/etc/redis-src/sentinel.conf:ro
+    ports:
+      - "26380:26380"
+    networks:
+      - pre-event-network
+
+  redis-sentinel-3:
+    container_name: pre-event-redis-sentinel-3
+    image: redis:7.2-alpine
+    depends_on:
+      - redis
+      - redis-slave-1
+      - redis-slave-2
+    command: ["/bin/sh", "-c", "cp /etc/redis-src/sentinel.conf /tmp/sentinel.conf && redis-server /tmp/sentinel.conf --sentinel"]
+    volumes:
+      - ./redis/sentinel-3.conf:/etc/redis-src/sentinel.conf:ro
+    ports:
+      - "26381:26381"
+    networks:
+      - pre-event-network
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: vetautet-prometheus
+    restart: unless-stopped
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--web.enable-lifecycle"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "9090:9090"
+    networks:
+      - pre-event-network
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: vetautet-grafana
+    restart: unless-stopped
+    depends_on:
+      - prometheus
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_SERVER_DOMAIN: localhost
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+    ports:
+      - "3000:3000"
     networks:
       - pre-event-network

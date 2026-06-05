@@ -36,6 +36,7 @@ public interface PersistenceMapper {
     @Mapping(target = "seatId", source = "seat.id")
     @Mapping(target = "seatNumber", source = "seat.seatNumber")
     @Mapping(target = "carriageId", source = "seat.carriage.id")
+    @Mapping(target = "carriageTypeId", source = "seat.carriage.type.id")
     @Mapping(target = "carriageNumber", source = "seat.carriage.name")
     @Mapping(target = "carriageTypeName", source = "seat.carriage.type.name")
     Ticket toDomain(TicketEntity entity);

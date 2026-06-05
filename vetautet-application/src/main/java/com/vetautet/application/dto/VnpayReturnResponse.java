@@ -9,6 +9,7 @@ public class VnpayReturnResponse {
     private String code;
     private String message;
     private Long bookingId;
+    private String orderNumber;
     private String vnpTxnRef;
     private String transactionNo;
     private String responseCode;

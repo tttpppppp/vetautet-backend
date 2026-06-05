@@ -1,0 +1,22 @@
+CREATE TABLE IF NOT EXISTS test_orders (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    request_id VARCHAR(80) NOT NULL,
+    user_ref BIGINT NOT NULL,
+    ticket_ref BIGINT NULL,
+    quantity INT NOT NULL,
+    amount DECIMAL(18, 2) NOT NULL,
+    status VARCHAR(32) NOT NULL,
+    source VARCHAR(32) NOT NULL,
+    note VARCHAR(255) NULL,
+    kafka_key VARCHAR(80) NOT NULL,
+    received_at DATETIME NOT NULL,
+    processed_at DATETIME NOT NULL,
+    created_at DATETIME NOT NULL,
+    updated_at DATETIME NOT NULL,
+    UNIQUE KEY uk_test_orders_request_id (request_id),
+    KEY idx_test_orders_user_ref (user_ref),
+    KEY idx_test_orders_ticket_ref (ticket_ref),
+    KEY idx_test_orders_status (status),
+    KEY idx_test_orders_processed_at (processed_at),
+    KEY idx_test_orders_created_at (created_at)
+);

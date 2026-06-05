@@ -14,7 +14,11 @@ import com.vetautet.domain.model.Booking;
 import com.vetautet.domain.model.BookingDetail;
 import com.vetautet.domain.model.Promotion;
 import com.vetautet.domain.model.Station;
+import com.vetautet.domain.model.Ticket;
 import com.vetautet.domain.model.Trip;
+import com.vetautet.domain.model.TripSegment;
+import com.vetautet.domain.model.TripStop;
+import com.vetautet.domain.repository.TripScheduleRepository;
 import com.vetautet.domain.service.BookingDomainService;
 import com.vetautet.domain.service.PromotionDomainService;
 import com.vetautet.domain.service.TripDomainService;
@@ -53,6 +57,9 @@ public class TripAppServiceImpl implements TripAppService {
     private TripDomainService tripDomainService;
 
     @Autowired
+    private TripScheduleRepository tripScheduleRepository;
+
+    @Autowired
     private BookingDomainService bookingDomainService;
 
     @Autowired
@@ -74,7 +81,6 @@ public class TripAppServiceImpl implements TripAppService {
     private static final String TRIP_LOCK_KEY = "lock:trips:all";
 
     @Override
-    @SuppressWarnings("unchecked")
     public List<TripResponse> getAllTrips() {
         return getAllTripsWithRetry(0);
     }
@@ -171,6 +177,20 @@ public class TripAppServiceImpl implements TripAppService {
                 .collect(Collectors.toList());
     }
 
+    @Override
+    public List<TripResponse> getSchedules(LocalDate date, String station, int limit) {
+        LocalDate scheduleDate = date != null ? date : LocalDate.now();
+        String stationFilter = normalizeStation(station);
+
+        return getAllTrips().stream()
+                .filter(trip -> trip.getDepartureTime() != null)
+                .filter(trip -> trip.getDepartureTime().toLocalDate().equals(scheduleDate))
+                .filter(trip -> stationFilter == null || matchesStation(trip, stationFilter))
+                .sorted(Comparator.comparing(TripResponse::getDepartureTime))
+                .limit(normalizeLimit(limit))
+                .collect(Collectors.toList());
+    }
+
     private List<TripResponse> getAllTripsWithRetry(int retryCount) {
         if (retryCount > 3) {
             log.warn("Max retries reached for getAllTrips cache. Falling back to DB");
@@ -181,7 +201,7 @@ public class TripAppServiceImpl implements TripAppService {
 
         List<TripResponse> cachedTrips = (List<TripResponse>) redisTemplate.opsForValue().get(TRIP_CACHE_KEY);
         if (cachedTrips != null) {
-            log.debug("Trip list cache hit");
+            log.debug("[TRIP APP CACHE] REDIS_OBJECT_HIT key={}", TRIP_CACHE_KEY);
             return cachedTrips;
         }
 
@@ -191,15 +211,17 @@ public class TripAppServiceImpl implements TripAppService {
                 @SuppressWarnings("unchecked")
                 List<TripResponse> secondCheck = (List<TripResponse>) redisTemplate.opsForValue().get(TRIP_CACHE_KEY);
                 if (secondCheck != null) {
+                    log.debug("[TRIP APP CACHE] REDIS_OBJECT_HIT_AFTER_LOCK key={}", TRIP_CACHE_KEY);
                     return secondCheck;
                 }
 
-                log.debug("Trip list cache miss. Querying DB");
+                log.debug("[TRIP APP CACHE] REDIS_OBJECT_MISS key={} -> query DB", TRIP_CACHE_KEY);
                 List<TripResponse> trips = tripDomainService.getAllActiveTrips().stream()
                         .map(trip -> userMapper.toTripResponse(trip, false))
                         .collect(Collectors.toList());
 
                 redisTemplate.opsForValue().set(TRIP_CACHE_KEY, trips, Duration.ofMinutes(10));
+                log.debug("[TRIP APP CACHE] REDIS_OBJECT_STORED key={} ttl=10m", TRIP_CACHE_KEY);
                 return trips;
             }
 
@@ -222,6 +244,7 @@ public class TripAppServiceImpl implements TripAppService {
 
         TripResponse cachedTrip = (TripResponse) redisTemplate.opsForValue().get(cacheKey);
         if (cachedTrip != null) {
+            log.debug("[TRIP APP CACHE] REDIS_OBJECT_HIT tripId={} key={}", id, cacheKey);
             return cachedTrip;
         }
 
@@ -230,13 +253,15 @@ public class TripAppServiceImpl implements TripAppService {
             if (lock.tryLock(5, 10, TimeUnit.SECONDS)) {
                 cachedTrip = (TripResponse) redisTemplate.opsForValue().get(cacheKey);
                 if (cachedTrip != null) {
+                    log.debug("[TRIP APP CACHE] REDIS_OBJECT_HIT_AFTER_LOCK tripId={} key={}", id, cacheKey);
                     return cachedTrip;
                 }
 
-                log.debug("Trip detail cache miss. Querying DB for id={}", id);
+                log.debug("[TRIP APP CACHE] REDIS_OBJECT_MISS tripId={} key={} -> query DB", id, cacheKey);
                 TripResponse trip = userMapper.toTripResponse(tripDomainService.getTripByIdFetched(id), true);
 
                 redisTemplate.opsForValue().set(cacheKey, trip, Duration.ofMinutes(10));
+                log.debug("[TRIP APP CACHE] REDIS_OBJECT_STORED tripId={} key={} ttl=10m", id, cacheKey);
                 return trip;
             }
 
@@ -254,13 +279,90 @@ public class TripAppServiceImpl implements TripAppService {
 
     @Override
     public TripResponse getTripById(Long id, Long bookingId) {
+        return getTripById(id, bookingId, null, null);
+    }
+
+    @Override
+    public TripResponse getTripById(Long id, Long bookingId, Long departureStationId, Long arrivalStationId) {
         if (bookingId == null) {
-            return getTripById(id);
+            if (departureStationId == null || arrivalStationId == null) {
+                return getTripById(id);
+            }
+            Trip tripDomain = tripDomainService.getTripByIdFetched(id);
+            TripResponse trip = userMapper.toTripResponse(tripDomain, true);
+            applyRouteSeatState(tripDomain, trip, departureStationId, arrivalStationId);
+            return trip;
         }
 
-        TripResponse trip = userMapper.toTripResponse(tripDomainService.getTripByIdFetched(id), true);
+        log.debug("[TRIP APP CACHE] SKIP_CACHE tripId={} bookingId={} reason=booking-specific-seat-state", id, bookingId);
+        Trip tripDomain = tripDomainService.getTripByIdFetched(id);
+        TripResponse trip = userMapper.toTripResponse(tripDomain, true);
+        applyRouteSeatState(tripDomain, trip, departureStationId, arrivalStationId);
         markHeldSeatsByCurrentBooking(trip, bookingId);
         return trip;
+    }
+
+    private void applyRouteSeatState(Trip tripDomain, TripResponse trip, Long departureStationId, Long arrivalStationId) {
+        if (tripDomain == null || trip == null || trip.getCarriages() == null
+                || departureStationId == null || arrivalStationId == null) {
+            return;
+        }
+
+        RouteSegments routeSegments = resolveRouteSegments(tripDomain.getId(), departureStationId, arrivalStationId);
+        Map<Long, String> statusBySeatId = tripScheduleRepository.findSeatStatusesForSegments(
+                tripDomain.getId(),
+                routeSegments.segmentIds()
+        );
+        if (statusBySeatId.isEmpty()) {
+            return;
+        }
+
+        Map<Long, Long> seatIdByTicketId = tripDomain.getTickets() == null
+                ? Map.of()
+                : tripDomain.getTickets().stream()
+                .filter(ticket -> ticket.getId() != null && ticket.getSeatId() != null)
+                .collect(Collectors.toMap(Ticket::getId, Ticket::getSeatId, (left, right) -> left));
+
+        trip.getCarriages().stream()
+                .map(CarriageResponse::getSeats)
+                .filter(seats -> seats != null)
+                .flatMap(List::stream)
+                .forEach(seat -> {
+                    Long seatId = seatIdByTicketId.get(seat.getId());
+                    String routeStatus = seatId != null ? statusBySeatId.get(seatId) : null;
+                    if (routeStatus != null) {
+                        seat.setStatus(routeStatus);
+                    }
+                });
+    }
+
+    private RouteSegments resolveRouteSegments(Long tripId, Long departureStationId, Long arrivalStationId) {
+        List<TripStop> stops = tripScheduleRepository.findStopsByTripId(tripId).stream()
+                .sorted(Comparator.comparing(TripStop::getStopOrder))
+                .collect(Collectors.toList());
+        TripStop departureStop = findStopByStationId(stops, departureStationId);
+        TripStop arrivalStop = findStopByStationId(stops, arrivalStationId);
+        if (departureStop == null || arrivalStop == null || departureStop.getStopOrder() >= arrivalStop.getStopOrder()) {
+            return new RouteSegments(List.of());
+        }
+
+        List<Long> segmentIds = tripScheduleRepository.findSegmentsByTripId(tripId).stream()
+                .filter(segment -> segment.getSegmentOrder() >= departureStop.getStopOrder())
+                .filter(segment -> segment.getSegmentOrder() < arrivalStop.getStopOrder())
+                .sorted(Comparator.comparing(TripSegment::getSegmentOrder))
+                .map(TripSegment::getId)
+                .collect(Collectors.toList());
+        return new RouteSegments(segmentIds);
+    }
+
+    private TripStop findStopByStationId(List<TripStop> stops, Long stationId) {
+        if (stops == null || stationId == null) {
+            return null;
+        }
+        return stops.stream()
+                .filter(stop -> stop.getStation() != null && stationId.equals(stop.getStation().getId()))
+                .findFirst()
+                .orElse(null);
     }
 
     private void markHeldSeatsByCurrentBooking(TripResponse trip, Long bookingId) {
@@ -350,6 +452,22 @@ public class TripAppServiceImpl implements TripAppService {
         return "ALL".equals(normalized) ? null : normalized;
     }
 
+    private String normalizeStation(String station) {
+        if (station == null || station.isBlank()) {
+            return null;
+        }
+        return station.trim().toLowerCase();
+    }
+
+    private boolean matchesStation(TripResponse trip, String stationFilter) {
+        return containsIgnoreCase(trip.getDepartureStation(), stationFilter)
+                || containsIgnoreCase(trip.getArrivalStation(), stationFilter);
+    }
+
+    private boolean containsIgnoreCase(String value, String keyword) {
+        return value != null && value.toLowerCase().contains(keyword);
+    }
+
     @Override
     @Transactional
     public TripResponse createTrip(TripCreateRequest request) {
@@ -367,8 +485,7 @@ public class TripAppServiceImpl implements TripAppService {
         );
 
         redisTemplate.delete(TRIP_CACHE_KEY);
-        tripJsonCacheService.evict(TripCacheKeys.HTTP_TRIPS_ALL);
-        tripJsonCacheService.evictByPrefix(TripCacheKeys.HTTP_TRIPS_SEARCH_PREFIX);
+        tripJsonCacheService.evictByPrefix(TripCacheKeys.HTTP_TRIPS_PREFIX);
         return userMapper.toTripResponse(saved, false);
     }
 
@@ -391,9 +508,8 @@ public class TripAppServiceImpl implements TripAppService {
 
         redisTemplate.delete(TRIP_CACHE_KEY);
         redisTemplate.delete(TripCacheKeys.trip(id));
-        tripJsonCacheService.evict(TripCacheKeys.HTTP_TRIPS_ALL);
         tripJsonCacheService.evict(TripCacheKeys.httpTrip(id));
-        tripJsonCacheService.evictByPrefix(TripCacheKeys.HTTP_TRIPS_SEARCH_PREFIX);
+        tripJsonCacheService.evictByPrefix(TripCacheKeys.HTTP_TRIPS_PREFIX);
 
         return userMapper.toTripResponse(saved, false);
     }
@@ -404,9 +520,8 @@ public class TripAppServiceImpl implements TripAppService {
         tripDomainService.deleteTrip(id);
         redisTemplate.delete(TRIP_CACHE_KEY);
         redisTemplate.delete(TripCacheKeys.trip(id));
-        tripJsonCacheService.evict(TripCacheKeys.HTTP_TRIPS_ALL);
         tripJsonCacheService.evict(TripCacheKeys.httpTrip(id));
-        tripJsonCacheService.evictByPrefix(TripCacheKeys.HTTP_TRIPS_SEARCH_PREFIX);
+        tripJsonCacheService.evictByPrefix(TripCacheKeys.HTTP_TRIPS_PREFIX);
     }
 
     private int normalizeLimit(int limit) {
@@ -686,5 +801,8 @@ public class TripAppServiceImpl implements TripAppService {
                     null
             );
         }
+    }
+
+    private record RouteSegments(List<Long> segmentIds) {
     }
 }

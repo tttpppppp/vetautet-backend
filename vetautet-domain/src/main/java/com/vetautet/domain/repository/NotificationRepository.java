@@ -8,6 +8,7 @@ public interface NotificationRepository {
     Notification save(Notification notification);
     List<Notification> findByUserId(Long userId);
     Map<String, Object> findByUserId(Long userId, int page, int size);
+    boolean existsByUserIdAndTypeAndReferenceId(Long userId, String type, Long referenceId);
     void markAsRead(Long id);
     void markAllAsReadByUserId(Long userId);
     long countUnreadByUserId(Long userId);

@@ -1,9 +1,20 @@
 server:
-  port: 8080
+  port: ${PORT:8080}
+  tomcat:
+    threads:
+      max: ${SERVER_TOMCAT_THREADS_MAX:400}
+      min-spare: ${SERVER_TOMCAT_THREADS_MIN_SPARE:50}
+    accept-count: ${SERVER_TOMCAT_ACCEPT_COUNT:1000}
+    max-connections: ${SERVER_TOMCAT_MAX_CONNECTIONS:20000}
   servlet:
     context-path: /api/v1
 
 spring:
+  config:
+    import: optional:classpath:application-local.yml
+  mvc:
+    pathmatch:
+      matching-strategy: ant_path_matcher
   datasource:
     url: ${DB_URL:jdbc:mysql://localhost:3308/vetautet?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Ho_Chi_Minh}
     username: ${DB_USERNAME:root}
@@ -11,8 +22,11 @@ spring:
     driver-class-name: com.mysql.cj.jdbc.Driver
   data:
     redis:
-      host: localhost
-      port: 6319
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6319}
+      sentinel:
+        master: ${REDIS_SENTINEL_MASTER:}
+        nodes: ${REDIS_SENTINEL_NODES:}
   kafka:
     bootstrap-servers: localhost:9092
     consumer:
@@ -27,7 +41,7 @@ spring:
       value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
   jpa:
     hibernate:
-      ddl-auto: none
+      ddl-auto: ${JPA_DDL_AUTO:update}
     show-sql: ${JPA_SHOW_SQL:false}
     properties:
       hibernate:
@@ -75,10 +89,11 @@ momo:
   lang: ${MOMO_LANG:vi}
 
 vnpay:
-  pay-url: ${VNPAY_PAY_URL:https://sandbox.vnpayment.vn/paymentv2/vpcpay.html}
-  tmn-code: ${VNPAY_TMN_CODE:}
-  hash-secret: ${VNPAY_HASH_SECRET:}
-  return-url: ${VNPAY_RETURN_URL:http://localhost:5173/payment/vnpay-return}
+  pay-url: https://sandbox.vnpayment.vn/paymentv2/vpcpay.html
+  # Local sandbox demo config. Move these back to env variables before sharing/deploying.
+  tmn-code: ITY6NNOC
+  hash-secret: Q1D6OAHEJDIRCRFI3OD653QEQY4X5JTQ
+  return-url: http://localhost:5173/payment/vnpay-return
   version: 2.1.0
   command: pay
   order-type: other
@@ -86,12 +101,115 @@ vnpay:
   curr-code: VND
   expire-minutes: 15
 
+resilience4j:
+  circuitbreaker:
+    instances:
+      helloCircuit:
+        register-health-indicator: true
+        sliding-window-type: COUNT_BASED
+        sliding-window-size: 3
+        minimum-number-of-calls: 3
+        failure-rate-threshold: 50
+        wait-duration-in-open-state: 30s
+        permitted-number-of-calls-in-half-open-state: 1
+        event-consumer-buffer-size: 20
+      momoPayment:
+        register-health-indicator: true
+        sliding-window-type: COUNT_BASED
+        sliding-window-size: 10
+        minimum-number-of-calls: 5
+        failure-rate-threshold: 50
+        slow-call-duration-threshold: 5s
+        slow-call-rate-threshold: 50
+        wait-duration-in-open-state: 30s
+        permitted-number-of-calls-in-half-open-state: 3
+        event-consumer-buffer-size: 50
+  ratelimiter:
+    instances:
+      helloTest:
+        register-health-indicator: true
+        limit-for-period: 5
+        limit-refresh-period: 1m
+        timeout-duration: 0s
+        event-consumer-buffer-size: 20
+      authLogin:
+        register-health-indicator: true
+        limit-for-period: 10
+        limit-refresh-period: 1m
+        timeout-duration: 0s
+        event-consumer-buffer-size: 50
+      authOtp:
+        register-health-indicator: true
+        limit-for-period: 5
+        limit-refresh-period: 1m
+        timeout-duration: 0s
+        event-consumer-buffer-size: 50
+      tripSearch:
+        register-health-indicator: true
+        limit-for-period: 60
+        limit-refresh-period: 1m
+        timeout-duration: 0s
+        event-consumer-buffer-size: 50
+      bookingWrite:
+        register-health-indicator: true
+        limit-for-period: 20
+        limit-refresh-period: 1m
+        timeout-duration: 0s
+        event-consumer-buffer-size: 50
+      paymentCreate:
+        register-health-indicator: true
+        limit-for-period: 10
+        limit-refresh-period: 1m
+        timeout-duration: 0s
+        event-consumer-buffer-size: 50
+
 vetautet:
+  cache:
+    trip:
+      # Set false before high-QPS benchmarks because per-request logging reduces throughput.
+      log-local-cache: ${TRIP_LOCAL_CACHE_LOG_ENABLED:false}
+  security:
+    data-encryption-key: ${DATA_ENCRYPTION_KEY:${jwt.secret}}
   kafka:
     producer:
-      enabled: ${KAFKA_PRODUCER_ENABLED:false}
+      enabled: ${KAFKA_PRODUCER_ENABLED:true}
+  outbox:
+    publisher:
+      enabled: ${OUTBOX_PUBLISHER_ENABLED:true}
+      fixed-delay-ms: ${OUTBOX_PUBLISHER_FIXED_DELAY_MS:500}
+      batch-size: ${OUTBOX_PUBLISHER_BATCH_SIZE:200}
+      retry-delay-seconds: ${OUTBOX_PUBLISHER_RETRY_DELAY_SECONDS:5}
+      send-timeout-seconds: ${OUTBOX_PUBLISHER_SEND_TIMEOUT_SECONDS:10}
+    cleanup:
+      enabled: ${OUTBOX_CLEANUP_ENABLED:true}
+      fixed-delay-ms: ${OUTBOX_CLEANUP_FIXED_DELAY_MS:300000}
+      retention-hours: ${OUTBOX_CLEANUP_RETENTION_HOURS:168}
+      batch-size: ${OUTBOX_CLEANUP_BATCH_SIZE:1000}
   mail:
     enabled: ${MAIL_ENABLED:true}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: "*"
+  endpoint:
+    health:
+      show-details: always
+  health:
+    circuitbreakers:
+      enabled: true
+    mail:
+      enabled: ${MANAGEMENT_HEALTH_MAIL_ENABLED:false}
+    ratelimiters:
+      enabled: true
+  metrics:
+    tags:
+      application: vetautet-api
+  prometheus:
+    metrics:
+      export:
+        enabled: true
 
 logging:
   level:

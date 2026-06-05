@@ -1,0 +1,25 @@
+global:
+  scrape_interval: 5s
+  evaluation_interval: 5s
+
+scrape_configs:
+  - job_name: "vetautet-prometheus"
+    scrape_interval: 5s
+    static_configs:
+      - targets:
+          - "localhost:9090"
+    metrics_path: "/metrics"
+
+  - job_name: "vetautet-springboot"
+    scrape_interval: 5s
+    static_configs:
+      - targets:
+          - "host.docker.internal:8080"
+    metrics_path: "/api/v1/actuator/prometheus"
+
+  - job_name: "vegeta-attack"
+    scrape_interval: 1s
+    static_configs:
+      - targets:
+          - "host.docker.internal:8880"
+    metrics_path: "/metrics"

@@ -3,6 +3,7 @@ package com.vetautet.infrastructure.persistence.entity;
 import jakarta.persistence.*;
 import lombok.Data;
 import lombok.NoArgsConstructor;
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
 @Entity
@@ -22,13 +23,30 @@ public class BookingDetailEntity {
     @JoinColumn(name = "ticket_id", nullable = false)
     private TicketEntity ticket;
 
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, length = 20)
+    private Direction direction = Direction.OUTBOUND;
+
+    private Long departureStationId;
+
+    private Long arrivalStationId;
+
+    @Column(length = 255)
+    private String segmentIds;
+
+    private BigDecimal segmentPrice;
+
     @Column(nullable = false)
     private String passengerName;
 
-    @Column(nullable = false)
+    @Column(nullable = false, length = 512)
     private String passengerIdCard;
 
     private String passengerType;
 
     private LocalDateTime createdAt;
+
+    public enum Direction {
+        OUTBOUND, RETURN
+    }
 }

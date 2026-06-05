@@ -3,7 +3,6 @@ package com.vetautet.controller.resource;
 import com.vetautet.application.dto.UpdateProfileRequest;
 import com.vetautet.application.service.user.UserAppService;
 import com.vetautet.domain.gateway.FileStorageGateway;
-import com.vetautet.domain.security.AuthenticatedUser;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -27,7 +26,7 @@ public class UploadController {
     public ResponseEntity<Map<String, String>> uploadImage(
             @RequestParam("file") MultipartFile file,
             @RequestParam(value = "folder", defaultValue = "avatars") String folder,
-            @AuthenticationPrincipal AuthenticatedUser authenticatedUser) {
+            @AuthenticationPrincipal(expression = "userId") Long userId) {
 
         // Validate file
         if (file.isEmpty()) {
@@ -51,11 +50,10 @@ public class UploadController {
                     folder
             );
 
-            if (authenticatedUser != null && authenticatedUser.getDomainUser() != null && "avatars".equals(folder)) {
+            if (userId != null && "avatars".equals(folder)) {
                 UpdateProfileRequest profileRequest = new UpdateProfileRequest();
-                profileRequest.setName(authenticatedUser.getDomainUser().getName());
                 profileRequest.setImageUrl(imageUrl);
-                userAppService.updateProfile(authenticatedUser.getDomainUser().getId(), profileRequest);
+                userAppService.updateProfile(userId, profileRequest);
             }
 
             return ResponseEntity.ok(Map.of("imageUrl", imageUrl));

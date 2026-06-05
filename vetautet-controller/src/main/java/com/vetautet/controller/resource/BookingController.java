@@ -5,7 +5,7 @@ import com.vetautet.application.dto.BookingHistoryResponse;
 import com.vetautet.application.dto.BookingRequest;
 import com.vetautet.application.dto.BookingResponse;
 import com.vetautet.application.service.order.BookingAppService;
-import com.vetautet.domain.security.AuthenticatedUser;
+import io.github.resilience4j.ratelimiter.annotation.RateLimiter;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ContentDisposition;
 import org.springframework.http.HttpHeaders;
@@ -27,25 +27,37 @@ public class BookingController {
 
     @GetMapping("/my")
     @PreAuthorize("hasRole('CUSTOMER')")
-    public ResponseEntity<List<BookingHistoryResponse>> getMyBookings(@AuthenticationPrincipal AuthenticatedUser authenticatedUser) {
-        return ResponseEntity.ok(bookingAppService.getMyBookings(authenticatedUser.getDomainUser().getId()));
+    public ResponseEntity<List<BookingHistoryResponse>> getMyBookings(
+            @AuthenticationPrincipal(expression = "userId") Long userId) {
+        return ResponseEntity.ok(bookingAppService.getMyBookings(userId));
     }
 
     @GetMapping("/{id}")
     @PreAuthorize("hasRole('CUSTOMER')")
     public ResponseEntity<BookingDetailResponse> getMyBookingDetail(
             @PathVariable("id") Long id,
-            @AuthenticationPrincipal AuthenticatedUser authenticatedUser) {
-        return ResponseEntity.ok(bookingAppService.getMyBookingDetail(authenticatedUser.getDomainUser().getId(), id));
+            @AuthenticationPrincipal(expression = "userId") Long userId) {
+        return ResponseEntity.ok(bookingAppService.getMyBookingDetail(userId, id));
+    }
+
+    @GetMapping("/order/{orderNumber}")
+    @PreAuthorize("hasRole('CUSTOMER')")
+    public ResponseEntity<BookingDetailResponse> getMyBookingDetailByOrderNumber(
+            @PathVariable String orderNumber,
+            @AuthenticationPrincipal(expression = "userId") Long userId) {
+        return ResponseEntity.ok(bookingAppService.getMyBookingDetailByOrderNumber(
+                userId,
+                orderNumber
+        ));
     }
 
     @GetMapping("/{id}/invoice.pdf")
     @PreAuthorize("hasRole('CUSTOMER')")
     public ResponseEntity<byte[]> downloadMyBookingInvoice(
             @PathVariable("id") Long id,
-            @AuthenticationPrincipal AuthenticatedUser authenticatedUser) {
+            @AuthenticationPrincipal(expression = "userId") Long userId) {
         byte[] pdf = bookingAppService.generateMyBookingInvoicePdf(
-                authenticatedUser.getDomainUser().getId(),
+                userId,
                 id
         );
         String filename = "vetau-booking-" + id + ".pdf";
@@ -60,8 +72,10 @@ public class BookingController {
 
     @PostMapping
     @PreAuthorize("hasRole('CUSTOMER')")
-    public ResponseEntity<BookingResponse> createBooking(@RequestBody BookingRequest request) {
-        return ResponseEntity.ok(bookingAppService.createBooking(request));
+    @RateLimiter(name = "bookingWrite")
+    public ResponseEntity<BookingResponse> createBooking(@RequestBody BookingRequest request,
+                                                         @AuthenticationPrincipal(expression = "userId") Long userId) {
+        return ResponseEntity.accepted().body(bookingAppService.enqueueCreateBooking(userId, request));
     }
 
     @PutMapping("/{id}")

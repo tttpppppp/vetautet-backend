@@ -1,0 +1,5 @@
+ALTER TABLE bookings
+    ADD COLUMN IF NOT EXISTS contact_name VARCHAR(150) DEFAULT NULL AFTER total_price,
+    ADD COLUMN IF NOT EXISTS contact_email VARCHAR(150) DEFAULT NULL AFTER contact_name,
+    ADD COLUMN IF NOT EXISTS contact_phone VARCHAR(30) DEFAULT NULL AFTER contact_email,
+    ADD COLUMN IF NOT EXISTS contact_id_card VARCHAR(512) DEFAULT NULL AFTER contact_phone;

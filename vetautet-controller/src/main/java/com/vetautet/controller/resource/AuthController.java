@@ -14,7 +14,7 @@ import com.vetautet.application.dto.UpdateProfileRequest;
 import com.vetautet.application.dto.TicketResponse;
 import com.vetautet.application.dto.VerifyEmailRequest;
 import com.vetautet.application.service.user.UserAppService;
-import com.vetautet.domain.security.AuthenticatedUser;
+import io.github.resilience4j.ratelimiter.annotation.RateLimiter;
 import jakarta.validation.Valid;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
@@ -31,56 +31,65 @@ public class AuthController {
     private UserAppService userAppService;
 
     @PostMapping("/login")
+    @RateLimiter(name = "authLogin")
     public ResponseEntity<AuthResponse> login(@Valid @RequestBody LoginRequest loginRequest) {
         return ResponseEntity.ok(userAppService.login(loginRequest.getEmail(), loginRequest.getPassword()));
     }
 
     @PostMapping("/google")
+    @RateLimiter(name = "authLogin")
     public ResponseEntity<AuthResponse> loginWithGoogle(@Valid @RequestBody GoogleLoginRequest request) {
         return ResponseEntity.ok(userAppService.loginWithGoogle(request.getToken()));
     }
 
     @PostMapping("/register")
+    @RateLimiter(name = "authOtp")
     public ResponseEntity<AuthResponse> register(@Valid @RequestBody RegisterRequest registerRequest) {
         return ResponseEntity.ok(userAppService.register(registerRequest));
     }
 
     @PostMapping("/verify-email")
+    @RateLimiter(name = "authOtp")
     public ResponseEntity<EmailVerificationResponse> verifyEmail(@Valid @RequestBody VerifyEmailRequest request) {
         return ResponseEntity.ok(userAppService.verifyEmail(request));
     }
 
     @PostMapping("/resend-verification-otp")
+    @RateLimiter(name = "authOtp")
     public ResponseEntity<EmailVerificationResponse> resendVerificationOtp(
             @Valid @RequestBody ResendVerificationOtpRequest request) {
         return ResponseEntity.ok(userAppService.resendVerificationOtp(request));
     }
 
     @PostMapping("/forgot-password/request")
+    @RateLimiter(name = "authOtp")
     public ResponseEntity<PasswordResetResponse> requestPasswordReset(
             @Valid @RequestBody ForgotPasswordRequest request) {
         return ResponseEntity.ok(userAppService.requestPasswordReset(request));
     }
 
     @PostMapping("/forgot-password/reset")
+    @RateLimiter(name = "authOtp")
     public ResponseEntity<PasswordResetResponse> resetPassword(
             @Valid @RequestBody ResetPasswordRequest request) {
         return ResponseEntity.ok(userAppService.resetPassword(request));
     }
 
     @GetMapping("/me")
-    public ResponseEntity<UserResponse> getProfile(@AuthenticationPrincipal AuthenticatedUser authenticatedUser) {
-        return ResponseEntity.ok(userAppService.getProfileById(authenticatedUser.getDomainUser().getId()));
+    public ResponseEntity<UserResponse> getProfile(@AuthenticationPrincipal(expression = "userId") Long userId) {
+        return ResponseEntity.ok(userAppService.getProfileById(userId));
     }
 
     @PutMapping("/profile")
-    public ResponseEntity<UserResponse> updateProfile(@AuthenticationPrincipal AuthenticatedUser authenticatedUser, @Valid @RequestBody UpdateProfileRequest request) {
-        return ResponseEntity.ok(userAppService.updateProfile(authenticatedUser.getDomainUser().getId(), request));
+    public ResponseEntity<UserResponse> updateProfile(
+            @AuthenticationPrincipal(expression = "userId") Long userId,
+            @Valid @RequestBody UpdateProfileRequest request) {
+        return ResponseEntity.ok(userAppService.updateProfile(userId, request));
     }
 
     @GetMapping("/my-tickets")
-    public ResponseEntity<List<TicketResponse>> getMyTickets(@AuthenticationPrincipal AuthenticatedUser authenticatedUser) {
-        return ResponseEntity.ok(userAppService.getMyTickets(authenticatedUser.getDomainUser().getId()));
+    public ResponseEntity<List<TicketResponse>> getMyTickets(@AuthenticationPrincipal(expression = "userId") Long userId) {
+        return ResponseEntity.ok(userAppService.getMyTickets(userId));
     }
 
     @PostMapping("/refresh")

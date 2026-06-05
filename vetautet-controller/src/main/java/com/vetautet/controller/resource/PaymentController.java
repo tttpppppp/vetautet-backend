@@ -7,6 +7,7 @@ import com.vetautet.application.dto.VnpayCreatePaymentResponse;
 import com.vetautet.application.dto.VnpayIpnResponse;
 import com.vetautet.application.dto.VnpayReturnResponse;
 import com.vetautet.application.service.payment.PaymentAppService;
+import io.github.resilience4j.ratelimiter.annotation.RateLimiter;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -33,6 +34,7 @@ public class PaymentController {
 
     @PostMapping("/momo/bookings/{bookingId}")
     @PreAuthorize("hasRole('CUSTOMER')")
+    @RateLimiter(name = "paymentCreate")
     public ResponseEntity<MomoCreatePaymentResponse> createMomoPayment(@PathVariable Long bookingId) {
         return ResponseEntity.ok(paymentAppService.createMomoPayment(bookingId));
     }
@@ -49,6 +51,7 @@ public class PaymentController {
 
     @PostMapping("/vnpay/bookings/{bookingId}")
     @PreAuthorize("hasRole('CUSTOMER')")
+    @RateLimiter(name = "paymentCreate")
     public ResponseEntity<VnpayCreatePaymentResponse> createVnpayPayment(@PathVariable Long bookingId,
                                                                          HttpServletRequest request) {
         return ResponseEntity.ok(paymentAppService.createVnpayPayment(bookingId, resolveClientIp(request)));

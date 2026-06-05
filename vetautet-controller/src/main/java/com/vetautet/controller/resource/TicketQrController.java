@@ -3,7 +3,6 @@ package com.vetautet.controller.resource;
 import com.vetautet.application.dto.TicketQrVerifyRequest;
 import com.vetautet.application.dto.TicketQrVerifyResponse;
 import com.vetautet.application.service.ticket.TicketQrService;
-import com.vetautet.domain.security.AuthenticatedUser;
 import jakarta.validation.Valid;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -32,9 +31,9 @@ public class TicketQrController {
     public ResponseEntity<byte[]> getMyTicketQr(
             @PathVariable Long ticketId,
             @RequestParam Long bookingId,
-            @AuthenticationPrincipal AuthenticatedUser authenticatedUser) {
+            @AuthenticationPrincipal(expression = "userId") Long userId) {
         byte[] qr = ticketQrService.generateOwnedTicketQrPng(
-                authenticatedUser.getDomainUser().getId(),
+                userId,
                 bookingId,
                 ticketId,
                 250

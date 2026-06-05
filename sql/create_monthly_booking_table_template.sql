@@ -1,0 +1,26 @@
+-- Replace ${YYYYMM} before running, for example 202605.
+CREATE TABLE IF NOT EXISTS bookings_${YYYYMM} (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    order_number VARCHAR(64) NOT NULL UNIQUE,
+    storage_month CHAR(6) NOT NULL,
+    trip_type ENUM('ONE_WAY', 'ROUND_TRIP') NOT NULL DEFAULT 'ONE_WAY',
+    user_id BIGINT NOT NULL,
+    original_price DECIMAL(15,2) NOT NULL DEFAULT 0,
+    promo_code VARCHAR(50) DEFAULT NULL,
+    discount_amount DECIMAL(15,2) NOT NULL DEFAULT 0,
+    total_price DECIMAL(15,2) NOT NULL,
+    contact_name VARCHAR(150) DEFAULT NULL,
+    contact_email VARCHAR(150) DEFAULT NULL,
+    contact_phone VARCHAR(30) DEFAULT NULL,
+    contact_id_card VARCHAR(512) DEFAULT NULL,
+    status ENUM('PENDING', 'PAID', 'CONFIRMED', 'EXPIRED', 'CANCELLED', 'REFUNDED', 'PARTIALLY_REFUNDED') NOT NULL DEFAULT 'PENDING',
+    expired_at DATETIME NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    deleted_at DATETIME DEFAULT NULL,
+    INDEX idx_bookings_${YYYYMM}_user_status (user_id, status),
+    INDEX idx_bookings_${YYYYMM}_storage_month (storage_month),
+    INDEX idx_bookings_${YYYYMM}_promo_code (promo_code),
+    INDEX idx_bookings_${YYYYMM}_expired_at (expired_at),
+    INDEX idx_bookings_${YYYYMM}_created_at (created_at)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_unicode_ci;

@@ -1,6 +1,8 @@
 package com.vetautet.controller.exception;
 
 import com.vetautet.domain.exception.BusinessException;
+import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
+import io.github.resilience4j.ratelimiter.RequestNotPermitted;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -30,6 +32,30 @@ public class GlobalExceptionHandler {
         return new ResponseEntity<>(message, HttpStatus.BAD_REQUEST);
     }
 
+    @ExceptionHandler(RequestNotPermitted.class)
+    public ResponseEntity<ErrorMessage> handleRateLimit(RequestNotPermitted ex, HttpServletRequest request) {
+        ErrorMessage message = ErrorMessage.builder()
+                .timestamp(LocalDateTime.now())
+                .status(HttpStatus.TOO_MANY_REQUESTS.value())
+                .error("RATE_LIMIT_EXCEEDED")
+                .message("Too many requests. Please try again later.")
+                .path(request.getRequestURI())
+                .build();
+        return new ResponseEntity<>(message, HttpStatus.TOO_MANY_REQUESTS);
+    }
+
+    @ExceptionHandler(CallNotPermittedException.class)
+    public ResponseEntity<ErrorMessage> handleOpenCircuit(CallNotPermittedException ex, HttpServletRequest request) {
+        ErrorMessage message = ErrorMessage.builder()
+                .timestamp(LocalDateTime.now())
+                .status(HttpStatus.SERVICE_UNAVAILABLE.value())
+                .error("CIRCUIT_BREAKER_OPEN")
+                .message("External service is temporarily unavailable. Please try again later.")
+                .path(request.getRequestURI())
+                .build();
+        return new ResponseEntity<>(message, HttpStatus.SERVICE_UNAVAILABLE);
+    }
+
     // 1. Bắt lỗi Validation (Dữ liệu đầu vào sai định dạng)
     @ExceptionHandler(MethodArgumentNotValidException.class)
     public ResponseEntity<ErrorMessage> handleValidationExceptions(MethodArgumentNotValidException ex, HttpServletRequest request) {
@@ -55,7 +81,6 @@ public class GlobalExceptionHandler {
     // 2. Bắt lỗi Logic Nghiệp vụ (RuntimeException)
     @ExceptionHandler(RuntimeException.class)
     public ResponseEntity<ErrorMessage> handleRuntimeExceptions(RuntimeException ex, HttpServletRequest request) {
-        ex.printStackTrace();
         ErrorMessage message = ErrorMessage.builder()
                 .timestamp(LocalDateTime.now())
                 .status(HttpStatus.BAD_REQUEST.value())
@@ -95,7 +120,6 @@ public class GlobalExceptionHandler {
     // 5. Bắt các lỗi hệ thống không xác định (500)
     @ExceptionHandler(Exception.class)
     public ResponseEntity<ErrorMessage> handleGeneralExceptions(Exception ex, HttpServletRequest request) {
-        ex.printStackTrace(); // Log lỗi ra console để debug
         ErrorMessage message = ErrorMessage.builder()
                 .timestamp(LocalDateTime.now())
                 .status(HttpStatus.INTERNAL_SERVER_ERROR.value())

@@ -68,6 +68,18 @@ public class NotificationInfrasRepositoryImpl implements NotificationRepository 
     }
 
     @Override
+    public boolean existsByUserIdAndTypeAndReferenceId(Long userId, String type, Long referenceId) {
+        if (userId == null || type == null || referenceId == null) {
+            return false;
+        }
+        return jpaRepository.existsByUserIdAndTypeAndReferenceId(
+                userId,
+                NotificationEntity.NotificationType.valueOf(type),
+                referenceId
+        );
+    }
+
+    @Override
     @Transactional
     public void markAsRead(Long id) {
         jpaRepository.markAsRead(id);

@@ -1,7 +1,6 @@
 package com.vetautet.controller.resource;
 
 import com.vetautet.application.service.notification.NotificationAppService;
-import com.vetautet.domain.model.User;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -21,18 +20,18 @@ public class NotificationController {
      */
     @GetMapping
     public ResponseEntity<Map<String, Object>> getMyNotifications(
-            @AuthenticationPrincipal(expression = "domainUser") User user,
+            @AuthenticationPrincipal(expression = "userId") Long userId,
             @RequestParam(name = "page", defaultValue = "0") int page,
             @RequestParam(name = "size", defaultValue = "10") int size) {
-        return ResponseEntity.ok(notificationAppService.getMyNotifications(user.getId(), page, size));
+        return ResponseEntity.ok(notificationAppService.getMyNotifications(userId, page, size));
     }
 
     /**
      * Đếm số thông báo chưa đọc (cho badge 🔔)
      */
     @GetMapping("/unread-count")
-    public ResponseEntity<Map<String, Long>> getUnreadCount(@AuthenticationPrincipal(expression = "domainUser") User user) {
-        long count = notificationAppService.getUnreadCount(user.getId());
+    public ResponseEntity<Map<String, Long>> getUnreadCount(@AuthenticationPrincipal(expression = "userId") Long userId) {
+        long count = notificationAppService.getUnreadCount(userId);
         return ResponseEntity.ok(Map.of("unreadCount", count));
     }
 
@@ -49,8 +48,8 @@ public class NotificationController {
      * Đánh dấu tất cả đã đọc
      */
     @PutMapping("/read-all")
-    public ResponseEntity<Void> markAllAsRead(@AuthenticationPrincipal(expression = "domainUser") User user) {
-        notificationAppService.markAllAsRead(user.getId());
+    public ResponseEntity<Void> markAllAsRead(@AuthenticationPrincipal(expression = "userId") Long userId) {
+        notificationAppService.markAllAsRead(userId);
         return ResponseEntity.ok().build();
     }
 }

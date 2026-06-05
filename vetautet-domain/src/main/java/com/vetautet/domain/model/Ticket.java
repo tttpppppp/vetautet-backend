@@ -18,6 +18,7 @@ public class Ticket {
     private Long seatId;
     private String seatNumber;
     private Long carriageId;
+    private Long carriageTypeId;
     private String carriageNumber;
     private String carriageTypeName;
     private BigDecimal price;

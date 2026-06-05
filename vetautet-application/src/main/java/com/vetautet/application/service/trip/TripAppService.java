@@ -17,8 +17,10 @@ public interface TripAppService {
     List<PopularRouteResponse> getPopularRoutes(int limit);
     List<PopularDestinationResponse> getPopularDestinations(int limit);
     List<TripResponse> getUpcomingDepartures(int limit);
+    List<TripResponse> getSchedules(LocalDate date, String station, int limit);
     TripResponse getTripById(Long id);
     TripResponse getTripById(Long id, Long bookingId);
+    TripResponse getTripById(Long id, Long bookingId, Long departureStationId, Long arrivalStationId);
     List<TripResponse> searchTrips(String departure, String arrival, LocalDate date,
                                   List<String> trainTypes, String trainCategory,
                                   BigDecimal minPrice, BigDecimal maxPrice);

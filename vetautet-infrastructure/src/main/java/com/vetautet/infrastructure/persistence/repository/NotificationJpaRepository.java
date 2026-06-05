@@ -23,5 +23,10 @@ public interface NotificationJpaRepository extends JpaRepository<NotificationEnt
     @Query("UPDATE NotificationEntity n SET n.isRead = true WHERE n.user.id = :userId")
     void markAllAsReadByUserId(@Param("userId") Long userId);
 
+    @Query("SELECT COUNT(n) > 0 FROM NotificationEntity n WHERE n.user.id = :userId AND n.type = :type AND n.referenceId = :referenceId")
+    boolean existsByUserIdAndTypeAndReferenceId(@Param("userId") Long userId,
+                                                @Param("type") NotificationEntity.NotificationType type,
+                                                @Param("referenceId") Long referenceId);
+
     long countByUserIdAndIsReadFalse(Long userId);
 }

@@ -124,7 +124,14 @@ public class VnpayPaymentGatewayImpl implements VnpayPaymentGateway {
             }
         });
 
-        String expectedHash = hmacSha512(buildHashData(hashParams), clean(hashSecret));
+        String hashData = buildHashData(hashParams);
+        String expectedHash = hmacSha512(hashData, clean(hashSecret));
+        System.out.println(">>> [VNPAY] Verify txnRef=" + params.get("vnp_TxnRef")
+                + ", responseCode=" + params.get("vnp_ResponseCode")
+                + ", transactionStatus=" + params.get("vnp_TransactionStatus"));
+        System.out.println(">>> [VNPAY] Verify hash data=" + hashData);
+        System.out.println(">>> [VNPAY] Verify expectedHash=" + expectedHash
+                + ", receivedHash=" + secureHash);
         return expectedHash.equalsIgnoreCase(secureHash);
     }
 

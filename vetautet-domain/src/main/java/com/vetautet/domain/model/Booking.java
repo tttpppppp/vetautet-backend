@@ -14,11 +14,19 @@ import java.util.List;
 @AllArgsConstructor
 public class Booking {
     private Long id;
+    private String orderNumber;
+    private String storageMonth;
+    private String asyncRequestId;
+    private String tripType;
     private User user;
     private BigDecimal originalPrice;
     private String promoCode;
     private BigDecimal discountAmount;
     private BigDecimal totalPrice;
+    private String contactName;
+    private String contactEmail;
+    private String contactPhone;
+    private String contactIdCard;
     private String status;
     private LocalDateTime expiredAt;
     private List<BookingDetail> details;
