@@ -22,13 +22,18 @@ spring:
     driver-class-name: com.mysql.cj.jdbc.Driver
   data:
     redis:
+      url: ${REDIS_URL:redis://${REDIS_HOST:localhost}:${REDIS_PORT:6319}}
       host: ${REDIS_HOST:localhost}
       port: ${REDIS_PORT:6319}
+      username: ${REDIS_USERNAME:}
+      password: ${REDIS_PASSWORD:}
+      ssl:
+        enabled: ${REDIS_SSL_ENABLED:false}
       sentinel:
         master: ${REDIS_SENTINEL_MASTER:}
         nodes: ${REDIS_SENTINEL_NODES:}
   kafka:
-    bootstrap-servers: localhost:9092
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
     consumer:
       group-id: vetautet-group
       auto-offset-reset: earliest
@@ -89,11 +94,11 @@ momo:
   lang: ${MOMO_LANG:vi}
 
 vnpay:
-  pay-url: https://sandbox.vnpayment.vn/paymentv2/vpcpay.html
+  pay-url: ${VNPAY_PAY_URL:https://sandbox.vnpayment.vn/paymentv2/vpcpay.html}
   # Local sandbox demo config. Move these back to env variables before sharing/deploying.
-  tmn-code: ITY6NNOC
-  hash-secret: Q1D6OAHEJDIRCRFI3OD653QEQY4X5JTQ
-  return-url: http://localhost:5173/payment/vnpay-return
+  tmn-code: ${VNPAY_TMN_CODE:ITY6NNOC}
+  hash-secret: ${VNPAY_HASH_SECRET:Q1D6OAHEJDIRCRFI3OD653QEQY4X5JTQ}
+  return-url: ${VNPAY_RETURN_URL:http://localhost:5173/payment/vnpay-return}
   version: 2.1.0
   command: pay
   order-type: other

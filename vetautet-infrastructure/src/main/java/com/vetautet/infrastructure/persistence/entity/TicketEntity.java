@@ -35,6 +35,6 @@ public class TicketEntity {
     private LocalDateTime updatedAt;
 
     public enum TicketStatus {
-        AVAILABLE, HOLD, BOOKED
+        AVAILABLE, QUEUED, HOLD, BOOKED
     }
 }

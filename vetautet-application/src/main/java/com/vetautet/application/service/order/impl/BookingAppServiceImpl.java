@@ -15,6 +15,7 @@ import com.vetautet.domain.model.*;
 import com.vetautet.domain.repository.BookingRepository;
 import com.vetautet.domain.repository.TripScheduleRepository;
 import com.vetautet.domain.service.BookingDomainService;
+import com.vetautet.domain.service.PassengerFareRuleDomainService;
 import com.vetautet.domain.service.PaymentDomainService;
 import com.vetautet.domain.service.PromotionDomainService;
 import com.vetautet.domain.service.TicketDomainService;
@@ -40,9 +41,9 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
-import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
@@ -60,6 +61,9 @@ public class BookingAppServiceImpl implements BookingAppService {
 
     @Autowired
     private PromotionDomainService promotionDomainService;
+
+    @Autowired
+    private PassengerFareRuleDomainService passengerFareRuleDomainService;
 
     @Autowired
     private TripDomainService tripDomainService;
@@ -97,7 +101,7 @@ public class BookingAppServiceImpl implements BookingAppService {
     @Autowired
     private SensitiveDataCryptoService sensitiveDataCryptoService;
 
-    private static final int MAX_SEATS_PER_BOOKING = 4;
+    private static final int MAX_SEATS_PER_BOOKING = 10;
     private static final String ORDER_CREATED_TOPIC = "order-created";
     private static final String BOOKING_CREATE_REQUESTED_TOPIC = "booking-create-requested";
     private static final String PAYMENT_CONFIRMED_TOPIC = "payment-confirmed";
@@ -114,44 +118,94 @@ public class BookingAppServiceImpl implements BookingAppService {
             throw new RuntimeException("Ban can dang nhap de dat ve");
         }
 
-        String requestId = "BOOK-" + UUID.randomUUID();
-        BookingCreateRequestedEvent event = BookingCreateRequestedEvent.builder()
-                .requestId(requestId)
-                .userId(userId)
-                .tripType(resolveTripType(request))
-                .tripId(request.getTripId())
-                .departureStationId(request.getDepartureStationId())
-                .arrivalStationId(request.getArrivalStationId())
-                .ticketIds(request.getTicketIds())
-                .returnTripId(request.getReturnTripId())
-                .returnDepartureStationId(request.getReturnDepartureStationId())
-                .returnArrivalStationId(request.getReturnArrivalStationId())
-                .returnTicketIds(request.getReturnTicketIds())
-                .passengers(toBookingCreateRequestedPassengers(request))
-                .promoCode(request.getPromoCode())
-                .contactName(request.getContactName())
-                .contactEmail(request.getContactEmail())
-                .contactPhone(request.getContactPhone())
-                .contactIdCard(request.getContactIdCard())
-                .requestedAt(LocalDateTime.now())
-                .build();
+        return createBookingForUser(userId, request, null);
+    }
 
-        enqueueOutboxEvent(
-                BOOKING_CREATE_REQUESTED_TOPIC,
-                requestId,
-                "BOOKING_CREATE_REQUESTED",
-                "BOOKING_REQUEST",
-                null,
-                event,
-                "BOOKING_CREATE_REQUESTED"
-        );
+    private void queueBookingRequestSeats(Long userId, BookingRequest request) {
+        List<BookingLegRequest> legRequests = resolveBookingLegRequests(request);
+        List<Long> requestedTicketIds = allRequestedTicketIds(request);
+        List<Long> sortedIds = requestedTicketIds.stream().distinct().sorted().collect(Collectors.toList());
+        if (sortedIds.size() != requestedTicketIds.size()) {
+            throw new RuntimeException("Duplicate ticket id in booking request");
+        }
 
-        return BookingResponse.builder()
-                .requestId(requestId)
-                .status("QUEUED")
-                .tripType(resolveTripType(request))
-                .ticketIds(allRequestedTicketIds(request))
-                .build();
+        RLock[] locks = sortedIds.stream()
+                .map(id -> redissonClient.getLock(BOOKING_LOCK_PREFIX + id))
+                .toArray(RLock[]::new);
+        RLock multiLock = redissonClient.getMultiLock(locks);
+        boolean isLocked = false;
+        try {
+            if (!multiLock.tryLock(3, 10, TimeUnit.SECONDS)) {
+                throw new RuntimeException("He thong dang ban xu ly ghe ban chon, vui long thu lai sau vai giay");
+            }
+            isLocked = true;
+
+            List<Ticket> tickets = ticketDomainService.getTicketsByIds(requestedTicketIds);
+            if (tickets.size() != requestedTicketIds.size()) {
+                throw new RuntimeException("Mot so ghe khong ton tai hoac du lieu bi thay doi");
+            }
+
+            Map<Long, Ticket> ticketById = tickets.stream()
+                    .collect(Collectors.toMap(Ticket::getId, ticket -> ticket));
+            List<PreparedBookingLeg> preparedLegs = prepareBookingLegs(legRequests, ticketById, request);
+
+            for (PreparedBookingLeg leg : preparedLegs) {
+                for (Ticket ticket : leg.tickets()) {
+                    if (ticket.getSeatId() == null) {
+                        throw new RuntimeException("Cannot determine seat for ticket " + ticket.getId());
+                    }
+                    if (!tripScheduleRepository.areSeatSegmentsAvailable(
+                            leg.routeSelection().tripId(),
+                            ticket.getSeatId(),
+                            leg.routeSelection().segmentIds())) {
+                        throw new RuntimeException("Ghe " + ticket.getSeatNumber() + " khong con trong cho chang da chon");
+                    }
+                }
+            }
+
+            LocalDateTime queueExpiredAt = LocalDateTime.now().plusMinutes(SEAT_HOLD_TTL_MINUTES);
+            for (Ticket ticket : tickets) {
+                ticket.setStatus("QUEUED");
+                ticket.setHoldExpiredAt(queueExpiredAt);
+            }
+            ticketDomainService.saveTickets(tickets);
+
+            for (PreparedBookingLeg leg : preparedLegs) {
+                for (Ticket ticket : leg.tickets()) {
+                    tripScheduleRepository.queueSeatSegments(
+                            leg.routeSelection().tripId(),
+                            ticket.getSeatId(),
+                            leg.routeSelection().segmentIds(),
+                            queueExpiredAt
+                    );
+                }
+            }
+
+            afterCommit(() -> evictTripReadCachesForTickets(tickets, null));
+            preparedLegs.forEach(leg -> leg.tickets().forEach(ticket -> afterCommit(() -> messagingTemplate.convertAndSend(
+                    "/topic/trips/" + leg.routeSelection().tripId() + "/seats",
+                    SeatStatusEvent.builder()
+                            .tripId(leg.routeSelection().tripId())
+                            .ticketId(ticket.getId())
+                            .seatNumber(ticket.getSeatNumber())
+                            .status("QUEUED")
+                            .bookingId(null)
+                            .departureStationId(leg.routeSelection().departureStationId())
+                            .arrivalStationId(leg.routeSelection().arrivalStationId())
+                            .segmentIds(leg.routeSelection().segmentIdsCsv())
+                            .build()
+            ))));
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new RuntimeException("Qua trinh dat ve bi gian doan");
+        } finally {
+            if (isLocked) {
+                try {
+                    multiLock.unlock();
+                } catch (Exception ignored) {
+                }
+            }
+        }
     }
 
     @Override
@@ -167,6 +221,81 @@ public class BookingAppServiceImpl implements BookingAppService {
 
         User user = userDomainService.getById(userId);
         return createBookingInternal(request, user, asyncRequestId);
+    }
+
+    @Override
+    @Transactional
+    public void releaseQueuedBooking(Long userId, BookingRequest request) {
+        if (request == null) {
+            return;
+        }
+        List<Long> requestedTicketIds = allRequestedTicketIds(request);
+        if (requestedTicketIds.isEmpty()) {
+            return;
+        }
+
+        List<Long> sortedIds = requestedTicketIds.stream().distinct().sorted().collect(Collectors.toList());
+        RLock[] locks = sortedIds.stream()
+                .map(id -> redissonClient.getLock(BOOKING_LOCK_PREFIX + id))
+                .toArray(RLock[]::new);
+        RLock multiLock = redissonClient.getMultiLock(locks);
+        boolean isLocked = false;
+        try {
+            if (!multiLock.tryLock(3, 10, TimeUnit.SECONDS)) {
+                return;
+            }
+            isLocked = true;
+
+            List<Ticket> tickets = ticketDomainService.getTicketsByIds(requestedTicketIds);
+            Map<Long, Ticket> ticketById = tickets.stream()
+                    .collect(Collectors.toMap(Ticket::getId, ticket -> ticket));
+            List<PreparedBookingLeg> preparedLegs = prepareBookingLegs(resolveBookingLegRequests(request), ticketById, request);
+
+            List<Ticket> queuedTickets = tickets.stream()
+                    .filter(ticket -> "QUEUED".equalsIgnoreCase(ticket.getStatus()))
+                    .collect(Collectors.toList());
+            for (Ticket ticket : queuedTickets) {
+                ticket.setStatus("AVAILABLE");
+                ticket.setHoldExpiredAt(null);
+            }
+            if (!queuedTickets.isEmpty()) {
+                ticketDomainService.saveTickets(queuedTickets);
+            }
+
+            for (PreparedBookingLeg leg : preparedLegs) {
+                for (Ticket ticket : leg.tickets()) {
+                    tripScheduleRepository.releaseQueuedSeatSegments(
+                            leg.routeSelection().tripId(),
+                            ticket.getSeatId(),
+                            leg.routeSelection().segmentIds()
+                    );
+                }
+            }
+
+            afterCommit(() -> evictTripReadCachesForTickets(tickets, null));
+            preparedLegs.forEach(leg -> leg.tickets().forEach(ticket -> afterCommit(() -> messagingTemplate.convertAndSend(
+                    "/topic/trips/" + leg.routeSelection().tripId() + "/seats",
+                    SeatStatusEvent.builder()
+                            .tripId(leg.routeSelection().tripId())
+                            .ticketId(ticket.getId())
+                            .seatNumber(ticket.getSeatNumber())
+                            .status("AVAILABLE")
+                            .bookingId(null)
+                            .departureStationId(leg.routeSelection().departureStationId())
+                            .arrivalStationId(leg.routeSelection().arrivalStationId())
+                            .segmentIds(leg.routeSelection().segmentIdsCsv())
+                            .build()
+            ))));
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        } finally {
+            if (isLocked) {
+                try {
+                    multiLock.unlock();
+                } catch (Exception ignored) {
+                }
+            }
+        }
     }
 
     @Override
@@ -223,17 +352,23 @@ public class BookingAppServiceImpl implements BookingAppService {
 
                 Map<Long, Ticket> ticketById = tickets.stream()
                         .collect(Collectors.toMap(Ticket::getId, ticket -> ticket));
-                List<PreparedBookingLeg> preparedLegs = prepareBookingLegs(legRequests, ticketById);
+                List<PreparedBookingLeg> preparedLegs = prepareBookingLegs(legRequests, ticketById, request);
 
                 for (PreparedBookingLeg leg : preparedLegs) {
                     for (Ticket ticket : leg.tickets()) {
                         if (ticket.getSeatId() == null) {
                             throw new RuntimeException("Cannot determine seat for ticket " + ticket.getId());
                         }
-                        if (!tripScheduleRepository.areSeatSegmentsAvailable(
-                                leg.routeSelection().tripId(),
-                                ticket.getSeatId(),
-                                leg.routeSelection().segmentIds())) {
+                        boolean seatBookable = asyncRequestId != null
+                                ? tripScheduleRepository.areSeatSegmentsBookable(
+                                        leg.routeSelection().tripId(),
+                                        ticket.getSeatId(),
+                                        leg.routeSelection().segmentIds())
+                                : tripScheduleRepository.areSeatSegmentsAvailable(
+                                        leg.routeSelection().tripId(),
+                                        ticket.getSeatId(),
+                                        leg.routeSelection().segmentIds());
+                        if (!seatBookable) {
                             throw new RuntimeException("Ghe " + ticket.getSeatNumber() + " khong con trong cho chang da chon");
                         }
                     }
@@ -286,7 +421,7 @@ public class BookingAppServiceImpl implements BookingAppService {
                                     .segmentPrice(leg.segmentPricesByTicketId().get(ticket.getId()))
                                     .passengerName(pDetails != null ? pDetails.getName() : "Khach hang")
                                     .passengerIdCard(encryptSensitiveText(pDetails != null ? pDetails.getIdCard() : "N/A"))
-                                    .passengerType("ADULT")
+                                    .passengerType(passengerTypeOf(pDetails))
                                     .booking(booking)
                                     .build();
                         }))
@@ -401,7 +536,7 @@ public class BookingAppServiceImpl implements BookingAppService {
 
                 Long bookingTripId = resolveBookingTripId(request, tickets);
                 RouteSelection routeSelection = resolveRouteSelection(bookingTripId, request);
-                Map<Long, BigDecimal> segmentPricesByTicketId = resolveSegmentPricesByTicket(tickets, routeSelection);
+                Map<Long, BigDecimal> segmentPricesByTicketId = resolveSegmentPricesByTicket(tickets, routeSelection, request, "OUTBOUND");
 
                 for (Ticket ticket : tickets) {
                     if (ticket.getTripId() == null && request.getTripId() == null) {
@@ -462,7 +597,7 @@ public class BookingAppServiceImpl implements BookingAppService {
                                     .segmentPrice(segmentPricesByTicketId.get(ticket.getId()))
                                     .passengerName(pDetails != null ? pDetails.getName() : "Khách hàng")
                                     .passengerIdCard(encryptSensitiveText(pDetails != null ? pDetails.getIdCard() : "N/A"))
-                                    .passengerType("ADULT")
+                                    .passengerType(passengerTypeOf(pDetails))
                                     .booking(booking)
                                     .build();
                         })
@@ -566,6 +701,11 @@ public class BookingAppServiceImpl implements BookingAppService {
 
         // 2. Cập nhật thông tin chi tiết từng hành khách
         if (request.getPassengers() != null) {
+            validateChildPassengersShareCarriageWithAdult(
+                    null,
+                    passengersForBookingValidation(booking, request.getPassengers()),
+                    ticketByIdFromBooking(booking)
+            );
             for (BookingRequest.PassengerDetails pDetails : request.getPassengers()) {
                 booking.getDetails().stream()
                         .filter(detail -> detail.getTicket().getId().equals(pDetails.getTicketId()))
@@ -573,6 +713,7 @@ public class BookingAppServiceImpl implements BookingAppService {
                         .ifPresent(detail -> {
                             detail.setPassengerName(pDetails.getName());
                             detail.setPassengerIdCard(encryptSensitiveText(pDetails.getIdCard()));
+                            detail.setPassengerType(passengerTypeOf(pDetails));
                         });
             }
         }
@@ -814,6 +955,132 @@ public class BookingAppServiceImpl implements BookingAppService {
                 || request.getReturnArrivalStationId() != null) {
             throw new RuntimeException("Vui long chon tripType ROUND_TRIP khi dat ve khu hoi");
         }
+
+        validatePassengerAssignments(request);
+    }
+
+    private void validatePassengerAssignments(BookingRequest request) {
+        List<Long> requestedTicketIds = allRequestedTicketIds(request);
+        List<BookingRequest.PassengerDetails> passengers = request.getPassengers() != null
+                ? request.getPassengers()
+                : List.of();
+
+        if (passengers.size() != requestedTicketIds.size()) {
+            throw new RuntimeException("So hanh khach phai bang so ghe da chon");
+        }
+
+        java.util.Set<Long> requestedTicketIdSet = new java.util.HashSet<>(requestedTicketIds);
+        java.util.Set<Long> passengerTicketIdSet = new java.util.HashSet<>();
+
+        for (BookingRequest.PassengerDetails passenger : passengers) {
+            if (passenger == null || passenger.getTicketId() == null) {
+                throw new RuntimeException("Moi hanh khach phai duoc gan voi mot ghe");
+            }
+            if (!requestedTicketIdSet.contains(passenger.getTicketId())) {
+                throw new RuntimeException("Thong tin hanh khach khong khop voi ghe da chon");
+            }
+            if (!passengerTicketIdSet.add(passenger.getTicketId())) {
+                throw new RuntimeException("Mot ghe chi duoc gan cho mot hanh khach");
+            }
+            if (blankToNull(passenger.getName()) == null) {
+                throw new RuntimeException("Vui long nhap ho ten cho tat ca hanh khach");
+            }
+            if (blankToNull(passenger.getIdCard()) == null) {
+                throw new RuntimeException("Vui long nhap CCCD cho tat ca hanh khach");
+            }
+            passenger.setPassengerType(passengerTypeOf(passenger));
+        }
+
+        if (!passengerTicketIdSet.containsAll(requestedTicketIdSet)) {
+            throw new RuntimeException("Moi ghe da chon phai co thong tin hanh khach tuong ung");
+        }
+
+        validateChildPassengersShareCarriageWithAdult(request, passengers, requestedTicketIds);
+    }
+
+    private void validateChildPassengersShareCarriageWithAdult(BookingRequest request,
+                                                               List<BookingRequest.PassengerDetails> passengers,
+                                                               List<Long> requestedTicketIds) {
+        if (passengers.stream().noneMatch(passenger -> "CHILD".equals(passengerTypeOf(passenger)))) {
+            return;
+        }
+
+        List<Ticket> tickets = ticketDomainService.getTicketsByIds(requestedTicketIds);
+        if (tickets.size() != requestedTicketIds.size()) {
+            throw new RuntimeException("Mot so ghe khong ton tai hoac du lieu bi thay doi");
+        }
+        Map<Long, Ticket> ticketById = tickets.stream()
+                .collect(Collectors.toMap(Ticket::getId, ticket -> ticket));
+        validateChildPassengersShareCarriageWithAdult(request, passengers, ticketById);
+    }
+
+    private void validateChildPassengersShareCarriageWithAdult(BookingRequest request,
+                                                               List<BookingRequest.PassengerDetails> passengers,
+                                                               Map<Long, Ticket> ticketById) {
+        Map<String, java.util.Set<String>> adultCarriagesByDirection = new HashMap<>();
+        List<PassengerCarriageAssignment> childAssignments = new ArrayList<>();
+
+        for (BookingRequest.PassengerDetails passenger : passengers) {
+            Ticket ticket = ticketById.get(passenger.getTicketId());
+            if (ticket == null) {
+                throw new RuntimeException("Thong tin hanh khach khong khop voi ghe da chon");
+            }
+
+            String carriageNumber = normalizeCarriageNumber(ticket.getCarriageNumber());
+            if (carriageNumber.isBlank()) {
+                throw new RuntimeException("Khong xac dinh duoc toa cho ghe da chon");
+            }
+
+            String passengerType = passengerTypeOf(passenger);
+            String direction = resolvePassengerDirection(request, passenger);
+            if ("ADULT".equals(passengerType)) {
+                adultCarriagesByDirection
+                        .computeIfAbsent(direction, ignored -> new java.util.HashSet<>())
+                        .add(carriageNumber);
+            } else if ("CHILD".equals(passengerType)) {
+                childAssignments.add(new PassengerCarriageAssignment(direction, carriageNumber));
+            }
+        }
+
+        for (PassengerCarriageAssignment childAssignment : childAssignments) {
+            if (!adultCarriagesByDirection
+                    .getOrDefault(childAssignment.direction(), java.util.Set.of())
+                    .contains(childAssignment.carriageNumber())) {
+                throw new RuntimeException("Tre em phai ngoi cung toa voi nguoi lon");
+            }
+        }
+    }
+
+    private Map<Long, Ticket> ticketByIdFromBooking(Booking booking) {
+        return booking.getDetails().stream()
+                .filter(detail -> detail.getTicket() != null && detail.getTicket().getId() != null)
+                .collect(Collectors.toMap(detail -> detail.getTicket().getId(), BookingDetail::getTicket, (left, right) -> left));
+    }
+
+    private List<BookingRequest.PassengerDetails> passengersForBookingValidation(Booking booking,
+                                                                                 List<BookingRequest.PassengerDetails> requestedPassengers) {
+        Map<Long, BookingRequest.PassengerDetails> requestedByTicketId = requestedPassengers.stream()
+                .filter(passenger -> passenger != null && passenger.getTicketId() != null)
+                .collect(Collectors.toMap(BookingRequest.PassengerDetails::getTicketId, passenger -> passenger, (left, right) -> right));
+
+        return booking.getDetails().stream()
+                .filter(detail -> detail.getTicket() != null && detail.getTicket().getId() != null)
+                .map(detail -> {
+                    Long ticketId = detail.getTicket().getId();
+                    BookingRequest.PassengerDetails requested = requestedByTicketId.get(ticketId);
+                    String requestedDirection = requested != null ? blankToNull(requested.getDirection()) : null;
+                    String requestedName = requested != null ? blankToNull(requested.getName()) : null;
+                    String requestedIdCard = requested != null ? blankToNull(requested.getIdCard()) : null;
+                    String requestedPassengerType = requested != null ? blankToNull(requested.getPassengerType()) : null;
+                    return new BookingRequest.PassengerDetails(
+                            ticketId,
+                            requestedDirection != null ? requestedDirection : detail.getDirection(),
+                            requestedName != null ? requestedName : detail.getPassengerName(),
+                            requestedIdCard != null ? requestedIdCard : detail.getPassengerIdCard(),
+                            requestedPassengerType != null ? requestedPassengerType : detail.getPassengerType()
+                    );
+                })
+                .collect(Collectors.toList());
     }
 
     private List<BookingCreateRequestedEvent.PassengerDetails> toBookingCreateRequestedPassengers(BookingRequest request) {
@@ -827,6 +1094,7 @@ public class BookingAppServiceImpl implements BookingAppService {
                         .direction(normalizeDirection(passenger.getDirection()))
                         .name(passenger.getName())
                         .idCard(passenger.getIdCard())
+                        .passengerType(passengerTypeOf(passenger))
                         .build())
                 .collect(Collectors.toList());
     }
@@ -873,6 +1141,29 @@ public class BookingAppServiceImpl implements BookingAppService {
         return normalized;
     }
 
+    private String passengerTypeOf(BookingRequest.PassengerDetails passenger) {
+        String passengerType = passenger != null ? blankToNull(passenger.getPassengerType()) : null;
+        return passengerType == null ? "ADULT" : passengerType.trim().toUpperCase(Locale.ROOT);
+    }
+
+    private String normalizeCarriageNumber(String carriageNumber) {
+        String normalized = blankToNull(carriageNumber);
+        return normalized == null ? "" : normalized.trim().toUpperCase(Locale.ROOT);
+    }
+
+    private String resolvePassengerDirection(BookingRequest request, BookingRequest.PassengerDetails passenger) {
+        if (passenger != null && blankToNull(passenger.getDirection()) != null) {
+            return normalizeDirection(passenger.getDirection());
+        }
+
+        Long ticketId = passenger != null ? passenger.getTicketId() : null;
+        if (ticketId != null && returnTicketIds(request).contains(ticketId)
+                && (request.getTicketIds() == null || !request.getTicketIds().contains(ticketId))) {
+            return "RETURN";
+        }
+        return "OUTBOUND";
+    }
+
     private List<Long> returnTicketIds(BookingRequest request) {
         return request != null && request.getReturnTicketIds() != null
                 ? request.getReturnTicketIds()
@@ -910,7 +1201,7 @@ public class BookingAppServiceImpl implements BookingAppService {
         return legs;
     }
 
-    private List<PreparedBookingLeg> prepareBookingLegs(List<BookingLegRequest> legRequests, Map<Long, Ticket> ticketById) {
+    private List<PreparedBookingLeg> prepareBookingLegs(List<BookingLegRequest> legRequests, Map<Long, Ticket> ticketById, BookingRequest request) {
         List<PreparedBookingLeg> preparedLegs = new ArrayList<>();
         for (BookingLegRequest legRequest : legRequests) {
             List<Ticket> legTickets = legRequest.ticketIds().stream()
@@ -929,7 +1220,7 @@ public class BookingAppServiceImpl implements BookingAppService {
                     legRequest.departureStationId(),
                     legRequest.arrivalStationId()
             );
-            Map<Long, BigDecimal> segmentPricesByTicketId = resolveSegmentPricesByTicket(legTickets, routeSelection);
+            Map<Long, BigDecimal> segmentPricesByTicketId = resolveSegmentPricesByTicket(legTickets, routeSelection, request, legRequest.direction());
             preparedLegs.add(new PreparedBookingLeg(
                     legRequest.direction(),
                     tripId,
@@ -942,7 +1233,7 @@ public class BookingAppServiceImpl implements BookingAppService {
     }
 
     private BookingRequest.PassengerDetails findPassengerDetails(BookingRequest request, Long ticketId, String direction) {
-        if (request.getPassengers() == null) {
+        if (request == null || request.getPassengers() == null) {
             return null;
         }
         String normalizedDirection = normalizeDirection(direction);
@@ -1020,30 +1311,64 @@ public class BookingAppServiceImpl implements BookingAppService {
         return new RouteSelection(tripId, resolvedDepartureStationId, resolvedArrivalStationId, segmentIds, segmentIdsCsv);
     }
 
-    private Map<Long, BigDecimal> resolveSegmentPricesByTicket(List<Ticket> tickets, RouteSelection routeSelection) {
+    private Map<Long, BigDecimal> resolveSegmentPricesByTicket(List<Ticket> tickets,
+                                                               RouteSelection routeSelection,
+                                                               BookingRequest request,
+                                                               String direction) {
         Map<Long, BigDecimal> result = new HashMap<>();
         for (Ticket ticket : tickets) {
             Long carriageTypeId = ticket.getCarriageTypeId();
             if (carriageTypeId == null) {
                 throw new RuntimeException("Cannot determine carriage type for seat " + ticket.getSeatNumber());
             }
+            BookingRequest.PassengerDetails passenger = findPassengerDetails(request, ticket.getId(), direction);
+            String passengerType = passengerTypeOf(passenger);
 
             List<TripSegmentPrice> prices = tripScheduleRepository.findPricesBySegmentIds(
                     routeSelection.segmentIds(),
                     carriageTypeId,
                     "ADULT"
             );
+            boolean usesAdultBase = true;
+            if (prices.size() != routeSelection.segmentIds().size() && !"ADULT".equals(passengerType)) {
+                prices = tripScheduleRepository.findPricesBySegmentIds(
+                        routeSelection.segmentIds(),
+                        carriageTypeId,
+                        passengerType
+                );
+                usesAdultBase = false;
+            }
             if (prices.size() != routeSelection.segmentIds().size()) {
                 throw new RuntimeException("Fare table is not configured for all selected segments");
             }
 
+            final boolean shouldApplyPassengerFareRule = usesAdultBase;
             BigDecimal price = prices.stream()
                     .map(TripSegmentPrice::getPrice)
                     .filter(Objects::nonNull)
+                    .map(segmentPrice -> shouldApplyPassengerFareRule ? applyPassengerFareRule(segmentPrice, passengerType) : segmentPrice)
                     .reduce(BigDecimal.ZERO, BigDecimal::add);
             result.put(ticket.getId(), price);
         }
         return result;
+    }
+
+    private BigDecimal applyPassengerFareRule(BigDecimal basePrice, String passengerType) {
+        BigDecimal price = basePrice == null ? BigDecimal.ZERO : basePrice;
+        if ("ADULT".equals(passengerTypeOfType(passengerType))) {
+            return price;
+        }
+        BigDecimal multiplier = passengerFareRuleDomainService.getActiveRule(passengerType)
+                .map(PassengerFareRule::getFareMultiplier)
+                .filter(Objects::nonNull)
+                .orElse(BigDecimal.ONE);
+        return price.multiply(multiplier).setScale(0, RoundingMode.HALF_UP);
+    }
+
+    private String passengerTypeOfType(String passengerType) {
+        return passengerType == null || passengerType.isBlank()
+                ? "ADULT"
+                : passengerType.trim().toUpperCase(Locale.ROOT);
     }
 
     private void holdSegmentInventory(Booking booking, List<PreparedBookingLeg> preparedLegs, LocalDateTime holdExpiredAt) {
@@ -1803,6 +2128,10 @@ public class BookingAppServiceImpl implements BookingAppService {
                                   Long arrivalStationId,
                                   List<Long> segmentIds,
                                   String segmentIdsCsv) {
+    }
+
+    private record PassengerCarriageAssignment(String direction,
+                                               String carriageNumber) {
     }
 
     private record BookingRouteView(Long tripId,

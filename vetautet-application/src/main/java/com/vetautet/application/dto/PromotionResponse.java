@@ -29,6 +29,7 @@ public class PromotionResponse {
     private String conditions;
     private String route;
     private List<String> categories;
+    private List<PassengerRuleResponse> passengerRules;
     private Integer usageLimit;
     private Integer usedCount;
     private Integer easeScore;
@@ -37,4 +38,23 @@ public class PromotionResponse {
     private boolean active;
     private boolean expiringSoon;
     private long daysLeft;
+
+    @Data
+    @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class PassengerRuleResponse {
+        private Long id;
+        private String passengerType;
+        private String label;
+        private Integer minAge;
+        private Integer maxAge;
+        private String discountType;
+        private String discountLabel;
+        private BigDecimal discountValue;
+        private BigDecimal maxDiscountAmount;
+        private Boolean verificationRequired;
+        private String description;
+        private String status;
+    }
 }

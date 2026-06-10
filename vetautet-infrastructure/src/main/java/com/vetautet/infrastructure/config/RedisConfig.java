@@ -9,6 +9,7 @@ import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import org.redisson.Redisson;
 import org.redisson.api.RedissonClient;
 import org.redisson.config.Config;
+import org.redisson.config.SingleServerConfig;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.cache.annotation.EnableCaching;
 import org.springframework.context.annotation.Bean;
@@ -18,15 +19,28 @@ import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.serializer.GenericJackson2JsonRedisSerializer;
 import org.springframework.data.redis.serializer.StringRedisSerializer;
 
+import java.net.URI;
+import java.net.URLDecoder;
+import java.nio.charset.StandardCharsets;
+
 @Configuration
 @EnableCaching
 public class RedisConfig {
+
+    @Value("${spring.data.redis.url:}")
+    private String redisUrl;
 
     @Value("${spring.data.redis.host:localhost}")
     private String redisHost;
 
     @Value("${spring.data.redis.port:6379}")
     private int redisPort;
+
+    @Value("${spring.data.redis.username:}")
+    private String redisUsername;
+
+    @Value("${spring.data.redis.password:}")
+    private String redisPassword;
 
     @Value("${spring.data.redis.sentinel.master:}")
     private String redisSentinelMaster;
@@ -75,9 +89,53 @@ public class RedisConfig {
                     .setMasterName(redisSentinelMaster)
                     .addSentinelAddress(sentinelAddresses);
         } else {
-            config.useSingleServer()
-                  .setAddress("redis://" + redisHost + ":" + redisPort);
+            RedisEndpoint endpoint = resolveRedisEndpoint();
+            SingleServerConfig singleServer = config.useSingleServer()
+                    .setAddress(endpoint.address());
+            if (endpoint.username() != null && !endpoint.username().isBlank()) {
+                singleServer.setUsername(endpoint.username());
+            }
+            if (endpoint.password() != null && !endpoint.password().isBlank()) {
+                singleServer.setPassword(endpoint.password());
+            }
         }
         return Redisson.create(config);
+    }
+
+    private RedisEndpoint resolveRedisEndpoint() {
+        if (redisUrl == null || redisUrl.isBlank()) {
+            return new RedisEndpoint("redis://" + redisHost + ":" + redisPort, redisUsername, redisPassword);
+        }
+
+        URI uri = URI.create(redisUrl);
+        String scheme = uri.getScheme();
+        if (!"redis".equalsIgnoreCase(scheme) && !"rediss".equalsIgnoreCase(scheme)) {
+            throw new IllegalArgumentException("Unsupported Redis URL scheme: " + scheme);
+        }
+
+        int port = uri.getPort() > 0 ? uri.getPort() : 6379;
+        String address = scheme.toLowerCase() + "://" + uri.getHost() + ":" + port;
+        String username = redisUsername;
+        String password = redisPassword;
+
+        String userInfo = uri.getUserInfo();
+        if (userInfo != null && !userInfo.isBlank()) {
+            String[] parts = userInfo.split(":", 2);
+            if (parts.length == 2) {
+                username = decode(parts[0]);
+                password = decode(parts[1]);
+            } else {
+                password = decode(parts[0]);
+            }
+        }
+
+        return new RedisEndpoint(address, username, password);
+    }
+
+    private String decode(String value) {
+        return URLDecoder.decode(value, StandardCharsets.UTF_8);
+    }
+
+    private record RedisEndpoint(String address, String username, String password) {
     }
 }

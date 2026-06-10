@@ -1,0 +1,17 @@
+.git
+.idea
+.vscode
+.codex-python-packages
+_docx_render*
+
+target
+**/target
+build
+**/build
+
+*.log
+*.out.log
+*.err.log
+vetautet_tidb*.sql
+vetautet-start/src/main/resources/application-local.yml
+environment/data

@@ -15,8 +15,10 @@ import java.text.NumberFormat;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Objects;
 
 @Service
@@ -74,6 +76,7 @@ public class BookingInvoicePdfService {
                             <td class="center">%d</td>
                             <td>
                                 <div class="strong">%s</div>
+                                <div class="ticket-type">%s</div>
                                 <div class="muted">%s</div>
                             </td>
                             <td>%s</td>
@@ -87,8 +90,9 @@ public class BookingInvoicePdfService {
                         """.formatted(
                         index++,
                         esc(valueOrDash(detail.getPassengerName())),
+                        esc(passengerTypeLabel(detail.getPassengerType())),
                         esc(valueOrDash(detail.getPassengerIdCard())),
-                        esc(valueOrDash(detail.getCarriageNumber())),
+                        esc(carriageLabel(detail.getCarriageNumber())),
                         esc(valueOrDash(detail.getSeatNumber())),
                         esc(money(detail.getPrice())),
                         esc(qrDataUri),
@@ -186,6 +190,16 @@ public class BookingInvoicePdfService {
                         .right { text-align: right; }
                         .strong { font-weight: 800; }
                         .muted { color: #6b7280; font-size: 11px; }
+                        .ticket-type {
+                            display: inline-block;
+                            margin: 3px 0;
+                            border-radius: 999px;
+                            padding: 2px 7px;
+                            background: #fee2e2;
+                            color: #991b1b;
+                            font-size: 10px;
+                            font-weight: 800;
+                        }
                         .qr {
                             width: 82px;
                             text-align: center;
@@ -279,6 +293,16 @@ public class BookingInvoicePdfService {
                                     <div class="value">%s</div>
                                 </div>
                             </div>
+                            <div class="row">
+                                <div class="cell">
+                                    <div class="label">Hành khách</div>
+                                    <div class="value">%s</div>
+                                </div>
+                                <div class="cell">
+                                    <div class="label">Chỗ ngồi</div>
+                                    <div class="value">%s</div>
+                                </div>
+                            </div>
                         </div>
                     </div>
 
@@ -339,6 +363,8 @@ public class BookingInvoicePdfService {
                 esc(valueOrDash(booking.getPaymentMethod())),
                 esc(valueOrDash(booking.getPaymentStatus())),
                 esc(DATE_FORMATTER.format(LocalDateTime.now())),
+                esc(passengerSummary(booking)),
+                esc(seatAssignmentSummary(booking)),
                 routeHtml,
                 rows,
                 esc(money(booking.getOriginalPrice())),
@@ -479,6 +505,87 @@ public class BookingInvoicePdfService {
                     </table>
                 </div>
                 """.formatted(stopRows.toString(), segmentRows.toString());
+    }
+
+    private String passengerSummary(BookingDetailResponse booking) {
+        if (booking == null || booking.getDetails() == null || booking.getDetails().isEmpty()) {
+            Integer passengerCount = booking != null ? booking.getPassengerCount() : null;
+            return passengerCount == null ? "0 hành khách" : passengerCount + " hành khách";
+        }
+
+        Map<String, Integer> counts = new LinkedHashMap<>();
+        counts.put("ADULT", 0);
+        counts.put("CHILD", 0);
+        counts.put("SENIOR", 0);
+        counts.put("STUDENT", 0);
+        for (BookingDetailResponse.TicketDetail detail : booking.getDetails()) {
+            String type = normalizePassengerType(detail.getPassengerType());
+            counts.put(type, counts.getOrDefault(type, 0) + 1);
+        }
+
+        java.util.ArrayList<String> parts = new java.util.ArrayList<>();
+        counts.forEach((type, count) -> {
+            if (count > 0) {
+                parts.add(count + " " + passengerTypeLabel(type).toLowerCase(VIETNAM));
+            }
+        });
+        return parts.isEmpty() ? booking.getDetails().size() + " hành khách" : String.join(", ", parts);
+    }
+
+    private String seatAssignmentSummary(BookingDetailResponse booking) {
+        if (booking == null || booking.getDetails() == null || booking.getDetails().isEmpty()) {
+            return booking != null && booking.getSeatNumbers() != null && !booking.getSeatNumbers().isEmpty()
+                    ? String.join(", ", booking.getSeatNumbers())
+                    : "-";
+        }
+
+        Map<String, Integer> counters = new LinkedHashMap<>();
+        java.util.ArrayList<String> items = new java.util.ArrayList<>();
+        for (BookingDetailResponse.TicketDetail detail : booking.getDetails()) {
+            String type = normalizePassengerType(detail.getPassengerType());
+            int index = counters.getOrDefault(type, 0) + 1;
+            counters.put(type, index);
+            items.add(passengerTypeLabel(type) + " " + index + ": " + seatPlace(detail));
+        }
+        return String.join("; ", items);
+    }
+
+    private String seatPlace(BookingDetailResponse.TicketDetail detail) {
+        if (detail == null) {
+            return "-";
+        }
+        return carriageLabel(detail.getCarriageNumber()) + " - Ghế " + valueOrDash(detail.getSeatNumber());
+    }
+
+    private String carriageLabel(String value) {
+        if (value == null || value.isBlank()) {
+            return "Chưa rõ toa";
+        }
+        String text = value.trim();
+        return text.toLowerCase(Locale.ROOT).startsWith("toa") ? text : "Toa " + text;
+    }
+
+    private String passengerTypeLabel(String value) {
+        return switch (normalizePassengerType(value)) {
+            case "CHILD" -> "Trẻ em";
+            case "SENIOR" -> "Người cao tuổi";
+            case "STUDENT" -> "Sinh viên";
+            default -> "Người lớn";
+        };
+    }
+
+    private String normalizePassengerType(String value) {
+        if (value == null || value.isBlank()) {
+            return "ADULT";
+        }
+        String normalized = value.trim().toUpperCase(Locale.ROOT);
+        return switch (normalized) {
+            case "CHILDREN", "CHILDS", "KID" -> "CHILD";
+            case "ELDERLY", "ELDERLYS", "SENIORS" -> "SENIOR";
+            case "STUDENTS" -> "STUDENT";
+            case "CHILD", "SENIOR", "STUDENT" -> normalized;
+            default -> "ADULT";
+        };
     }
 
     private TripStop findStopByStationId(List<TripStop> stops, Long stationId) {

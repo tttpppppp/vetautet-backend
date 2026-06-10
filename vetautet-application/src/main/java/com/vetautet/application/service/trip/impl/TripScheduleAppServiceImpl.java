@@ -1,12 +1,14 @@
 package com.vetautet.application.service.trip.impl;
 
 import com.vetautet.application.dto.*;
+import com.vetautet.domain.model.PassengerFareRule;
 import com.vetautet.application.service.trip.TripScheduleAppService;
 import com.vetautet.domain.model.Station;
 import com.vetautet.domain.model.Trip;
 import com.vetautet.domain.model.TripSegment;
 import com.vetautet.domain.model.TripSegmentPrice;
 import com.vetautet.domain.model.TripStop;
+import com.vetautet.domain.service.PassengerFareRuleDomainService;
 import com.vetautet.domain.service.TripDomainService;
 import com.vetautet.domain.service.TripScheduleDomainService;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -14,6 +16,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.util.Comparator;
 import java.util.List;
@@ -30,6 +33,9 @@ public class TripScheduleAppServiceImpl implements TripScheduleAppService {
 
     @Autowired
     private TripScheduleDomainService tripScheduleDomainService;
+
+    @Autowired
+    private PassengerFareRuleDomainService passengerFareRuleDomainService;
 
     @Override
     public TripItineraryResponse getItinerary(Long tripId) {
@@ -72,16 +78,29 @@ public class TripScheduleAppServiceImpl implements TripScheduleAppService {
         }
 
         List<Long> segmentIds = selectedSegments.stream().map(TripSegment::getId).collect(Collectors.toList());
-        List<TripSegmentPrice> prices = tripScheduleDomainService.getPricesForSegments(
+        String normalizedPassengerType = normalizePassengerType(passengerType);
+        List<TripSegmentPrice> basePrices = tripScheduleDomainService.getPricesForSegments(
                 segmentIds,
                 carriageTypeId,
-                normalizePassengerType(passengerType)
+                "ADULT"
         );
+        boolean usesAdultBase = true;
+        if (basePrices.size() != selectedSegments.size() && !"ADULT".equals(normalizedPassengerType)) {
+            basePrices = tripScheduleDomainService.getPricesForSegments(
+                    segmentIds,
+                    carriageTypeId,
+                    normalizedPassengerType
+            );
+            usesAdultBase = false;
+        }
 
-        if (prices.size() != selectedSegments.size()) {
+        if (basePrices.size() != selectedSegments.size()) {
             throw new RuntimeException("Fare table is not configured for all selected segments");
         }
 
+        List<TripSegmentPrice> prices = usesAdultBase
+                ? applyPassengerFareRule(basePrices, normalizedPassengerType)
+                : basePrices;
         BigDecimal totalPrice = prices.stream()
                 .map(TripSegmentPrice::getPrice)
                 .filter(Objects::nonNull)
@@ -101,7 +120,7 @@ public class TripScheduleAppServiceImpl implements TripScheduleAppService {
                 .carriageTypeId(carriageTypeId)
                 .carriageTypeCode(representativePrice.getCarriageTypeCode())
                 .carriageTypeName(representativePrice.getCarriageTypeName())
-                .passengerType(normalizePassengerType(passengerType))
+                .passengerType(normalizedPassengerType)
                 .totalPrice(totalPrice)
                 .currency(representativePrice.getCurrency())
                 .availableSeats(availableSeats)
@@ -288,6 +307,40 @@ public class TripScheduleAppServiceImpl implements TripScheduleAppService {
         return passengerType == null || passengerType.isBlank()
                 ? "ADULT"
                 : passengerType.trim().toUpperCase();
+    }
+
+    private List<TripSegmentPrice> applyPassengerFareRule(List<TripSegmentPrice> basePrices, String passengerType) {
+        return basePrices.stream()
+                .map(price -> copyPriceWithPassengerFare(price, passengerType))
+                .collect(Collectors.toList());
+    }
+
+    private TripSegmentPrice copyPriceWithPassengerFare(TripSegmentPrice price, String passengerType) {
+        return TripSegmentPrice.builder()
+                .id(price.getId())
+                .segmentId(price.getSegmentId())
+                .carriageTypeId(price.getCarriageTypeId())
+                .carriageTypeCode(price.getCarriageTypeCode())
+                .carriageTypeName(price.getCarriageTypeName())
+                .passengerType(passengerType)
+                .price(applyPassengerFareRule(price.getPrice(), passengerType))
+                .currency(price.getCurrency())
+                .status(price.getStatus())
+                .effectiveFrom(price.getEffectiveFrom())
+                .effectiveTo(price.getEffectiveTo())
+                .build();
+    }
+
+    private BigDecimal applyPassengerFareRule(BigDecimal basePrice, String passengerType) {
+        BigDecimal price = basePrice == null ? BigDecimal.ZERO : basePrice;
+        if ("ADULT".equals(normalizePassengerType(passengerType))) {
+            return price;
+        }
+        BigDecimal multiplier = passengerFareRuleDomainService.getActiveRule(passengerType)
+                .map(PassengerFareRule::getFareMultiplier)
+                .filter(Objects::nonNull)
+                .orElse(BigDecimal.ONE);
+        return price.multiply(multiplier).setScale(0, RoundingMode.HALF_UP);
     }
 
     private String stationName(Station station) {

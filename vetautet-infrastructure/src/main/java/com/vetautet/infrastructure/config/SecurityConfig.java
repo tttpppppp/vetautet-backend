@@ -2,6 +2,7 @@ package com.vetautet.infrastructure.config;
 
 import com.vetautet.infrastructure.security.JwtAuthFilter;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.authentication.AuthenticationManager;
@@ -31,6 +32,9 @@ public class SecurityConfig {
 
     @Autowired
     private JwtAuthFilter jwtAuthFilter;
+
+    @Value("${vetautet.cors.allowed-origin-patterns:http://localhost:5173,http://127.0.0.1:5173,https://*.ngrok-free.app,https://*.onrender.com}")
+    private String allowedOriginPatterns;
     
     @Autowired
     private UserDetailsService userDetailsService;
@@ -72,6 +76,7 @@ public class SecurityConfig {
                 .requestMatchers(new AntPathRequestMatcher("/trips/**")).permitAll()
                 .requestMatchers(new AntPathRequestMatcher("/stations/**")).permitAll()
                 .requestMatchers(new AntPathRequestMatcher("/promotions/**")).permitAll()
+                .requestMatchers(new AntPathRequestMatcher("/passenger-fare-rules/**")).permitAll()
                 .requestMatchers(new AntPathRequestMatcher("/payments/momo/ipn")).permitAll()
                 .requestMatchers(new AntPathRequestMatcher("/payments/momo/return")).permitAll()
                 .requestMatchers(new AntPathRequestMatcher("/payments/vnpay/return")).permitAll()
@@ -97,12 +102,10 @@ public class SecurityConfig {
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration configuration = new CorsConfiguration();
-        configuration.setAllowedOrigins(Arrays.asList("http://localhost:5173"));
-        configuration.setAllowedOriginPatterns(Arrays.asList(
-                "http://localhost:5173",
-                "http://127.0.0.1:5173",
-                "https://*.ngrok-free.app"
-        ));
+        configuration.setAllowedOriginPatterns(Arrays.stream(allowedOriginPatterns.split(","))
+                .map(String::trim)
+                .filter(origin -> !origin.isBlank())
+                .toList());
         configuration.setAllowedMethods(Arrays.asList("GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"));
         configuration.setAllowedHeaders(Arrays.asList("Authorization", "Content-Type", "X-Requested-With", "Accept", "Origin", "Access-Control-Request-Method", "Access-Control-Request-Headers"));
         configuration.setExposedHeaders(Arrays.asList("Access-Control-Allow-Origin", "Access-Control-Allow-Credentials"));

@@ -82,8 +82,12 @@ public class TicketInfrasRepositoryImpl implements TicketRepository {
     @Override
     public List<Ticket> findExpiredHoldTickets(LocalDateTime now) {
         return jpaRepository
-                .findByStatusAndHoldExpiredAtBefore(
-                        com.vetautet.infrastructure.persistence.entity.TicketEntity.TicketStatus.HOLD, now)
+                .findByStatusInAndHoldExpiredAtBefore(
+                        java.util.List.of(
+                                com.vetautet.infrastructure.persistence.entity.TicketEntity.TicketStatus.HOLD,
+                                com.vetautet.infrastructure.persistence.entity.TicketEntity.TicketStatus.QUEUED
+                        ),
+                        now)
                 .stream()
                 .map(mapper::toDomain)
                 .collect(Collectors.toList());

@@ -46,6 +46,6 @@ public class SeatSegmentInventoryEntity {
     private LocalDateTime updatedAt;
 
     public enum InventoryStatus {
-        AVAILABLE, HOLD, BOOKED, BLOCKED
+        AVAILABLE, QUEUED, HOLD, BOOKED, BLOCKED
     }
 }

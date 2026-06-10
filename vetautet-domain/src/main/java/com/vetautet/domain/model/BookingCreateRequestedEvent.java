@@ -41,5 +41,6 @@ public class BookingCreateRequestedEvent {
         private String direction;
         private String name;
         private String idCard;
+        private String passengerType;
     }
 }

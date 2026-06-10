@@ -1,12 +1,15 @@
 package com.vetautet.domain.service.impl;
 
 import com.vetautet.domain.model.Promotion;
+import com.vetautet.domain.model.PromotionPassengerRule;
 import com.vetautet.domain.repository.PromotionRepository;
 import com.vetautet.domain.service.PromotionDomainService;
 import org.springframework.stereotype.Service;
 
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Locale;
 
 @Service
 public class PromotionDomainServiceImpl implements PromotionDomainService {
@@ -61,6 +64,9 @@ public class PromotionDomainServiceImpl implements PromotionDomainService {
         existing.setConditions(promotion.getConditions());
         existing.setRoute(promotion.getRoute());
         existing.setCategories(promotion.getCategories());
+        if (promotion.getPassengerRules() != null) {
+            existing.setPassengerRules(promotion.getPassengerRules());
+        }
         existing.setUsageLimit(promotion.getUsageLimit());
         existing.setUsedCount(promotion.getUsedCount());
         existing.setEaseScore(promotion.getEaseScore());
@@ -86,6 +92,33 @@ public class PromotionDomainServiceImpl implements PromotionDomainService {
         }
         if (promotion.getEaseScore() == null) {
             promotion.setEaseScore(70);
+        }
+        if (promotion.getPassengerRules() != null) {
+            promotion.getPassengerRules().forEach(this::normalizePassengerRule);
+        }
+    }
+
+    private void normalizePassengerRule(PromotionPassengerRule rule) {
+        if (rule == null) {
+            return;
+        }
+        if (rule.getPassengerType() != null) {
+            rule.setPassengerType(rule.getPassengerType().trim().toUpperCase(Locale.ROOT));
+        }
+        if (rule.getLabel() == null || rule.getLabel().isBlank()) {
+            rule.setLabel(rule.getPassengerType());
+        }
+        if (rule.getDiscountType() == null || rule.getDiscountType().isBlank()) {
+            rule.setDiscountType("percent");
+        }
+        if (rule.getDiscountValue() == null) {
+            rule.setDiscountValue(BigDecimal.ZERO);
+        }
+        if (rule.getVerificationRequired() == null) {
+            rule.setVerificationRequired(false);
+        }
+        if (rule.getStatus() == null || rule.getStatus().isBlank()) {
+            rule.setStatus("ACTIVE");
         }
     }
 }

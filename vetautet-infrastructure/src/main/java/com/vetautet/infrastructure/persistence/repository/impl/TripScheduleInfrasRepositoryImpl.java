@@ -86,6 +86,7 @@ public class TripScheduleInfrasRepositoryImpl implements TripScheduleRepository 
                 tripId,
                 SeatSegmentInventoryEntity.InventoryStatus.AVAILABLE,
                 SeatSegmentInventoryEntity.InventoryStatus.HOLD,
+                SeatSegmentInventoryEntity.InventoryStatus.QUEUED,
                 LocalDateTime.now()
         )) {
             result.put((Long) row[0], (Long) row[1]);
@@ -105,6 +106,7 @@ public class TripScheduleInfrasRepositoryImpl implements TripScheduleRepository 
                 segmentIds.size(),
                 SeatSegmentInventoryEntity.InventoryStatus.AVAILABLE,
                 SeatSegmentInventoryEntity.InventoryStatus.HOLD,
+                SeatSegmentInventoryEntity.InventoryStatus.QUEUED,
                 LocalDateTime.now()
         ).size();
     }
@@ -141,6 +143,64 @@ public class TripScheduleInfrasRepositoryImpl implements TripScheduleRepository 
 
     @Override
     @Transactional
+    public boolean areSeatSegmentsBookable(Long tripId, Long seatId, List<Long> segmentIds) {
+        if (tripId == null || seatId == null || segmentIds == null || segmentIds.isEmpty()) {
+            return false;
+        }
+        List<SeatSegmentInventoryEntity> items = seatSegmentInventoryJpaRepository
+                .findForUpdateByTripSeatAndSegments(tripId, seatId, segmentIds);
+        releaseExpiredHolds(items, LocalDateTime.now());
+        return items.size() == segmentIds.size()
+                && items.stream().allMatch(item -> item.getStatus() == SeatSegmentInventoryEntity.InventoryStatus.AVAILABLE
+                || item.getStatus() == SeatSegmentInventoryEntity.InventoryStatus.QUEUED);
+    }
+
+    @Override
+    @Transactional
+    public void queueSeatSegments(Long tripId, Long seatId, List<Long> segmentIds, LocalDateTime queueExpiredAt) {
+        List<SeatSegmentInventoryEntity> items = seatSegmentInventoryJpaRepository
+                .findForUpdateByTripSeatAndSegments(tripId, seatId, segmentIds);
+        if (items.size() != segmentIds.size()) {
+            throw new RuntimeException("Seat segment inventory is not configured for selected route");
+        }
+        LocalDateTime now = LocalDateTime.now();
+        releaseExpiredHolds(items, now);
+        if (items.stream().anyMatch(item -> item.getStatus() != SeatSegmentInventoryEntity.InventoryStatus.AVAILABLE)) {
+            throw new RuntimeException("Seat is no longer available for selected route segments");
+        }
+
+        for (SeatSegmentInventoryEntity item : items) {
+            item.setStatus(SeatSegmentInventoryEntity.InventoryStatus.QUEUED);
+            item.setHoldExpiredAt(queueExpiredAt);
+            item.setBookingDetail(null);
+            item.setUpdatedAt(now);
+        }
+        seatSegmentInventoryJpaRepository.saveAll(items);
+    }
+
+    @Override
+    @Transactional
+    public void releaseQueuedSeatSegments(Long tripId, Long seatId, List<Long> segmentIds) {
+        if (tripId == null || seatId == null || segmentIds == null || segmentIds.isEmpty()) {
+            return;
+        }
+        List<SeatSegmentInventoryEntity> items = seatSegmentInventoryJpaRepository
+                .findForUpdateByTripSeatAndSegments(tripId, seatId, segmentIds);
+        LocalDateTime now = LocalDateTime.now();
+        for (SeatSegmentInventoryEntity item : items) {
+            if (item.getStatus() != SeatSegmentInventoryEntity.InventoryStatus.QUEUED) {
+                continue;
+            }
+            item.setStatus(SeatSegmentInventoryEntity.InventoryStatus.AVAILABLE);
+            item.setHoldExpiredAt(null);
+            item.setBookingDetail(null);
+            item.setUpdatedAt(now);
+        }
+        seatSegmentInventoryJpaRepository.saveAll(items);
+    }
+
+    @Override
+    @Transactional
     public void holdSeatSegments(Long tripId,
                                  Long seatId,
                                  List<Long> segmentIds,
@@ -156,7 +216,8 @@ public class TripScheduleInfrasRepositoryImpl implements TripScheduleRepository 
         }
         LocalDateTime now = LocalDateTime.now();
         releaseExpiredHolds(items, now);
-        if (items.stream().anyMatch(item -> item.getStatus() != SeatSegmentInventoryEntity.InventoryStatus.AVAILABLE)) {
+        if (items.stream().anyMatch(item -> item.getStatus() != SeatSegmentInventoryEntity.InventoryStatus.AVAILABLE
+                && item.getStatus() != SeatSegmentInventoryEntity.InventoryStatus.QUEUED)) {
             throw new RuntimeException("Seat is no longer available for selected route segments");
         }
 
@@ -392,6 +453,10 @@ public class TripScheduleInfrasRepositoryImpl implements TripScheduleRepository 
                 && !isExpiredHold(item, now))) {
             return SeatSegmentInventoryEntity.InventoryStatus.HOLD.name();
         }
+        if (seatItems.stream().anyMatch(item -> item.getStatus() == SeatSegmentInventoryEntity.InventoryStatus.QUEUED
+                && !isExpiredHold(item, now))) {
+            return SeatSegmentInventoryEntity.InventoryStatus.QUEUED.name();
+        }
         return SeatSegmentInventoryEntity.InventoryStatus.AVAILABLE.name();
     }
 
@@ -412,7 +477,8 @@ public class TripScheduleInfrasRepositoryImpl implements TripScheduleRepository 
 
     private boolean isExpiredHold(SeatSegmentInventoryEntity item, LocalDateTime now) {
         return item != null
-                && item.getStatus() == SeatSegmentInventoryEntity.InventoryStatus.HOLD
+                && (item.getStatus() == SeatSegmentInventoryEntity.InventoryStatus.HOLD
+                || item.getStatus() == SeatSegmentInventoryEntity.InventoryStatus.QUEUED)
                 && item.getHoldExpiredAt() != null
                 && !item.getHoldExpiredAt().isAfter(now);
     }

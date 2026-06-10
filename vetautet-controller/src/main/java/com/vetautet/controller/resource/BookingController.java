@@ -75,7 +75,7 @@ public class BookingController {
     @RateLimiter(name = "bookingWrite")
     public ResponseEntity<BookingResponse> createBooking(@RequestBody BookingRequest request,
                                                          @AuthenticationPrincipal(expression = "userId") Long userId) {
-        return ResponseEntity.accepted().body(bookingAppService.enqueueCreateBooking(userId, request));
+        return ResponseEntity.ok(bookingAppService.enqueueCreateBooking(userId, request));
     }
 
     @PutMapping("/{id}")

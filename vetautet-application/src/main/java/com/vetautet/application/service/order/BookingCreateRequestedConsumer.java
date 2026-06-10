@@ -49,7 +49,18 @@ public class BookingCreateRequestedConsumer {
                     + " userId=" + event.getUserId()
                     + " error=" + ex.getMessage());
             ex.printStackTrace();
+            releaseQueuedSeats(event);
             pushFailed(event, ex);
+        }
+    }
+
+    private void releaseQueuedSeats(BookingCreateRequestedEvent event) {
+        try {
+            bookingAppService.releaseQueuedBooking(event.getUserId(), toBookingRequest(event));
+        } catch (RuntimeException cleanupEx) {
+            System.err.println(">>> [BOOKING CREATE ASYNC CLEANUP FAILED] requestId=" + event.getRequestId()
+                    + " userId=" + event.getUserId()
+                    + " error=" + cleanupEx.getMessage());
         }
     }
 
@@ -111,7 +122,8 @@ public class BookingCreateRequestedConsumer {
                         passenger.getTicketId(),
                         passenger.getDirection(),
                         passenger.getName(),
-                        passenger.getIdCard()
+                        passenger.getIdCard(),
+                        passenger.getPassengerType()
                 ))
                 .collect(Collectors.toList());
     }

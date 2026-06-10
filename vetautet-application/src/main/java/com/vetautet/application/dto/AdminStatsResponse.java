@@ -35,6 +35,11 @@ public class AdminStatsResponse {
 
     private List<StatusCount> bookingStatusCounts;
     private List<RouteStats> topRoutes;
+    private List<TimeSeriesStats> dailyBookings;
+    private List<TimeSeriesStats> monthlyBookings;
+    private List<TimeSeriesStats> yearlyBookings;
+    private List<PurchaseStats> topPurchasedTrains;
+    private List<PurchaseStats> topPurchasedSeatTypes;
 
     @Data
     @Builder
@@ -56,5 +61,26 @@ public class AdminStatsResponse {
         private long tripsCount;
         private long availableSeats;
         private BigDecimal minPrice;
+    }
+
+    @Data
+    @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class TimeSeriesStats {
+        private String period;
+        private String label;
+        private long count;
+        private BigDecimal revenue;
+    }
+
+    @Data
+    @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class PurchaseStats {
+        private String name;
+        private long count;
+        private BigDecimal revenue;
     }
 }

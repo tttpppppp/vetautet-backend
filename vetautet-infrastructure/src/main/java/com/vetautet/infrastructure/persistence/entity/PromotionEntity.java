@@ -1,19 +1,27 @@
 package com.vetautet.infrastructure.persistence.entity;
 
 import jakarta.persistence.Column;
+import jakarta.persistence.CascadeType;
 import jakarta.persistence.Entity;
+import jakarta.persistence.FetchType;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
+import jakarta.persistence.OneToMany;
+import jakarta.persistence.OrderBy;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.PreUpdate;
 import jakarta.persistence.Table;
 import lombok.Data;
+import lombok.EqualsAndHashCode;
 import lombok.NoArgsConstructor;
+import lombok.ToString;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.List;
 
 @Entity
 @Table(name = "promotions")
@@ -67,6 +75,12 @@ public class PromotionEntity {
 
     @Column(nullable = false, length = 30)
     private String status;
+
+    @OneToMany(mappedBy = "promotion", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.LAZY)
+    @OrderBy("id ASC")
+    @ToString.Exclude
+    @EqualsAndHashCode.Exclude
+    private List<PromotionPassengerRuleEntity> passengerRules = new ArrayList<>();
 
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;

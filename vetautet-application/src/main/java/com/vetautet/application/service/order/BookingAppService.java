@@ -9,6 +9,7 @@ public interface BookingAppService {
     BookingResponse createBooking(BookingRequest request);
     BookingResponse enqueueCreateBooking(Long userId, BookingRequest request);
     BookingResponse createBookingForUser(Long userId, BookingRequest request, String asyncRequestId);
+    void releaseQueuedBooking(Long userId, BookingRequest request);
     BookingResponse updateBookingDetails(Long bookingId, BookingRequest request);
     BookingResponse confirmPayment(Long bookingId);
     java.util.List<BookingHistoryResponse> getMyBookings(Long userId);

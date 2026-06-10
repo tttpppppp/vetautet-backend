@@ -42,7 +42,8 @@ public class BookingDetailEntity {
     @Column(nullable = false, length = 512)
     private String passengerIdCard;
 
-    private String passengerType;
+    @Column(length = 30, nullable = false)
+    private String passengerType = "ADULT";
 
     private LocalDateTime createdAt;
 

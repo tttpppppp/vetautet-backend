@@ -17,6 +17,9 @@ public interface TripScheduleRepository {
     long countAvailableSeatsForSegments(Long tripId, List<Long> segmentIds, Long carriageTypeId);
     Map<Long, String> findSeatStatusesForSegments(Long tripId, List<Long> segmentIds);
     boolean areSeatSegmentsAvailable(Long tripId, Long seatId, List<Long> segmentIds);
+    boolean areSeatSegmentsBookable(Long tripId, Long seatId, List<Long> segmentIds);
+    void queueSeatSegments(Long tripId, Long seatId, List<Long> segmentIds, LocalDateTime queueExpiredAt);
+    void releaseQueuedSeatSegments(Long tripId, Long seatId, List<Long> segmentIds);
     void holdSeatSegments(Long tripId, Long seatId, List<Long> segmentIds, Long bookingDetailId, LocalDateTime holdExpiredAt);
     void updateSeatSegmentsForBookingDetail(Long bookingDetailId, String status, LocalDateTime holdExpiredAt);
     void replaceStops(Long tripId, List<TripStop> stops);

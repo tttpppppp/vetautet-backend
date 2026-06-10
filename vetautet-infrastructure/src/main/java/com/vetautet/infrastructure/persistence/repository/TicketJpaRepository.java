@@ -14,7 +14,7 @@ public interface TicketJpaRepository extends JpaRepository<TicketEntity, Long> {
 
     List<TicketEntity> findByTripId(Long tripId);
 
-    List<TicketEntity> findByStatusAndHoldExpiredAtBefore(TicketEntity.TicketStatus status, LocalDateTime now);
+    List<TicketEntity> findByStatusInAndHoldExpiredAtBefore(List<TicketEntity.TicketStatus> statuses, LocalDateTime now);
 
     @Query("SELECT COUNT(bd) FROM BookingDetailEntity bd WHERE bd.booking.user.id = :userId AND bd.booking.status = 'CONFIRMED'")
     long countByUserId(@Param("userId") Long userId);

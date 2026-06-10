@@ -17,12 +17,14 @@ public interface SeatSegmentInventoryJpaRepository extends JpaRepository<SeatSeg
     @Query("SELECT i.segment.id, COUNT(i.id) FROM SeatSegmentInventoryEntity i " +
             "WHERE i.trip.id = :tripId " +
             "AND (i.status = :availableStatus " +
-            "OR (i.status = :holdStatus AND i.holdExpiredAt IS NOT NULL AND i.holdExpiredAt <= :now)) " +
+            "OR (i.status = :holdStatus AND i.holdExpiredAt IS NOT NULL AND i.holdExpiredAt <= :now) " +
+            "OR (i.status = :queuedStatus AND i.holdExpiredAt IS NOT NULL AND i.holdExpiredAt <= :now)) " +
             "GROUP BY i.segment.id")
     List<Object[]> countAvailableByTripId(
             @Param("tripId") Long tripId,
             @Param("availableStatus") InventoryStatus availableStatus,
             @Param("holdStatus") InventoryStatus holdStatus,
+            @Param("queuedStatus") InventoryStatus queuedStatus,
             @Param("now") LocalDateTime now
     );
 
@@ -33,7 +35,8 @@ public interface SeatSegmentInventoryJpaRepository extends JpaRepository<SeatSeg
             "AND i.segment.id IN :segmentIds " +
             "AND (:carriageTypeId IS NULL OR c.type.id = :carriageTypeId) " +
             "AND (i.status = :availableStatus " +
-            "OR (i.status = :holdStatus AND i.holdExpiredAt IS NOT NULL AND i.holdExpiredAt <= :now)) " +
+            "OR (i.status = :holdStatus AND i.holdExpiredAt IS NOT NULL AND i.holdExpiredAt <= :now) " +
+            "OR (i.status = :queuedStatus AND i.holdExpiredAt IS NOT NULL AND i.holdExpiredAt <= :now)) " +
             "GROUP BY i.seat.id " +
             "HAVING COUNT(DISTINCT i.segment.id) = :segmentCount")
     List<Long> findAvailableSeatIdsForSegments(
@@ -43,6 +46,7 @@ public interface SeatSegmentInventoryJpaRepository extends JpaRepository<SeatSeg
             @Param("segmentCount") long segmentCount,
             @Param("availableStatus") InventoryStatus availableStatus,
             @Param("holdStatus") InventoryStatus holdStatus,
+            @Param("queuedStatus") InventoryStatus queuedStatus,
             @Param("now") LocalDateTime now
     );
 

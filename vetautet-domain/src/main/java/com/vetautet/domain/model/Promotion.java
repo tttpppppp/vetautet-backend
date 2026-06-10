@@ -28,6 +28,7 @@ public class Promotion {
     private String conditions;
     private String route;
     private List<String> categories;
+    private List<PromotionPassengerRule> passengerRules;
     private Integer usageLimit;
     private Integer usedCount;
     private Integer easeScore;

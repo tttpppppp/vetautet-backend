@@ -1,17 +1,22 @@
 package com.vetautet.infrastructure.persistence.repository.impl;
 
 import com.vetautet.domain.model.Promotion;
+import com.vetautet.domain.model.PromotionPassengerRule;
 import com.vetautet.domain.repository.PromotionRepository;
 import com.vetautet.infrastructure.persistence.entity.PromotionEntity;
+import com.vetautet.infrastructure.persistence.entity.PromotionPassengerRuleEntity;
 import com.vetautet.infrastructure.persistence.repository.PromotionJpaRepository;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
+import java.util.Locale;
+import java.util.Objects;
 import java.util.stream.Collectors;
 
 @Repository
@@ -82,6 +87,7 @@ public class PromotionInfrasRepositoryImpl implements PromotionRepository {
                 .conditions(entity.getConditions())
                 .route(entity.getRoute())
                 .categories(parseCategories(entity.getCategories()))
+                .passengerRules(toPassengerRules(entity.getPassengerRules()))
                 .usageLimit(entity.getUsageLimit())
                 .usedCount(entity.getUsedCount())
                 .easeScore(entity.getEaseScore())
@@ -105,10 +111,78 @@ public class PromotionInfrasRepositoryImpl implements PromotionRepository {
         entity.setConditions(promotion.getConditions());
         entity.setRoute(promotion.getRoute());
         entity.setCategories(joinCategories(promotion.getCategories()));
+        if (promotion.getPassengerRules() != null) {
+            applyPassengerRules(promotion.getPassengerRules(), entity);
+        }
         entity.setUsageLimit(promotion.getUsageLimit());
         entity.setUsedCount(promotion.getUsedCount());
         entity.setEaseScore(promotion.getEaseScore());
         entity.setStatus(promotion.getStatus());
+    }
+
+    private List<PromotionPassengerRule> toPassengerRules(List<PromotionPassengerRuleEntity> entities) {
+        if (entities == null || entities.isEmpty()) {
+            return List.of();
+        }
+        return entities.stream()
+                .map(entity -> PromotionPassengerRule.builder()
+                        .id(entity.getId())
+                        .passengerType(entity.getPassengerType())
+                        .label(entity.getLabel())
+                        .minAge(entity.getMinAge())
+                        .maxAge(entity.getMaxAge())
+                        .discountType(entity.getDiscountType())
+                        .discountValue(entity.getDiscountValue())
+                        .maxDiscountAmount(entity.getMaxDiscountAmount())
+                        .verificationRequired(entity.getVerificationRequired())
+                        .description(entity.getDescription())
+                        .status(entity.getStatus())
+                        .createdAt(entity.getCreatedAt())
+                        .updatedAt(entity.getUpdatedAt())
+                        .build())
+                .collect(Collectors.toList());
+    }
+
+    private void applyPassengerRules(List<PromotionPassengerRule> rules, PromotionEntity entity) {
+        List<PromotionPassengerRule> normalizedRules = rules.stream()
+                .filter(Objects::nonNull)
+                .collect(Collectors.toList());
+        entity.getPassengerRules().removeIf(existing -> normalizedRules.stream()
+                .noneMatch(rule -> sameRule(rule, existing)));
+
+        for (PromotionPassengerRule rule : normalizedRules) {
+            PromotionPassengerRuleEntity ruleEntity = entity.getPassengerRules().stream()
+                    .filter(existing -> sameRule(rule, existing))
+                    .findFirst()
+                    .orElseGet(() -> {
+                        PromotionPassengerRuleEntity created = new PromotionPassengerRuleEntity();
+                        created.setPromotion(entity);
+                        entity.getPassengerRules().add(created);
+                        return created;
+                    });
+            applyToPassengerRuleEntity(rule, ruleEntity);
+        }
+    }
+
+    private boolean sameRule(PromotionPassengerRule rule, PromotionPassengerRuleEntity entity) {
+        if (rule.getId() != null && entity.getId() != null) {
+            return rule.getId().equals(entity.getId());
+        }
+        String passengerType = normalizePassengerType(rule.getPassengerType());
+        return passengerType != null && passengerType.equals(normalizePassengerType(entity.getPassengerType()));
+    }
+
+    private void applyToPassengerRuleEntity(PromotionPassengerRule rule, PromotionPassengerRuleEntity entity) {
+        entity.setPassengerType(normalizePassengerType(rule.getPassengerType()));
+        entity.setLabel(defaultText(rule.getLabel(), entity.getPassengerType()));
+        entity.setMinAge(rule.getMinAge());
+        entity.setMaxAge(rule.getMaxAge());
+        entity.setDiscountType(defaultText(rule.getDiscountType(), "percent"));
+        entity.setDiscountValue(rule.getDiscountValue() == null ? BigDecimal.ZERO : rule.getDiscountValue());
+        entity.setMaxDiscountAmount(rule.getMaxDiscountAmount());
+        entity.setVerificationRequired(Boolean.TRUE.equals(rule.getVerificationRequired()));
+        entity.setDescription(rule.getDescription());
+        entity.setStatus(defaultText(rule.getStatus(), "ACTIVE"));
     }
 
     private List<String> parseCategories(String categories) {
@@ -129,5 +203,16 @@ public class PromotionInfrasRepositoryImpl implements PromotionRepository {
                 .filter(value -> value != null && !value.isBlank())
                 .map(String::trim)
                 .collect(Collectors.joining(","));
+    }
+
+    private String normalizePassengerType(String passengerType) {
+        if (passengerType == null || passengerType.isBlank()) {
+            return null;
+        }
+        return passengerType.trim().toUpperCase(Locale.ROOT);
+    }
+
+    private String defaultText(String value, String fallback) {
+        return value == null || value.isBlank() ? fallback : value.trim();
     }
 }

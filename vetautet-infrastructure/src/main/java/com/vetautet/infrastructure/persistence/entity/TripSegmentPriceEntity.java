@@ -32,7 +32,7 @@ public class TripSegmentPriceEntity {
     @JoinColumn(name = "carriage_type_id", nullable = false)
     private CarriageTypeEntity carriageType;
 
-    @Column(nullable = false)
+    @Column(nullable = false, length = 30)
     private String passengerType = "ADULT";
 
     @Column(nullable = false)

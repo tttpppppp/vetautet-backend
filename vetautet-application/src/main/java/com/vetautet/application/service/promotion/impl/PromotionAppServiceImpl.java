@@ -5,6 +5,7 @@ import com.vetautet.application.dto.PromotionResponse;
 import com.vetautet.application.dto.PromotionValidationResponse;
 import com.vetautet.application.service.promotion.PromotionAppService;
 import com.vetautet.domain.model.Promotion;
+import com.vetautet.domain.model.PromotionPassengerRule;
 import com.vetautet.domain.service.PromotionDomainService;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -124,6 +125,7 @@ public class PromotionAppServiceImpl implements PromotionAppService {
                 .conditions(request.getConditions())
                 .route(normalizeBlank(request.getRoute()))
                 .categories(request.getCategories())
+                .passengerRules(toPassengerRules(request.getPassengerRules()))
                 .usageLimit(request.getUsageLimit())
                 .usedCount(request.getUsedCount())
                 .easeScore(request.getEaseScore())
@@ -148,6 +150,7 @@ public class PromotionAppServiceImpl implements PromotionAppService {
                 .conditions(promotion.getConditions())
                 .route(promotion.getRoute())
                 .categories(promotion.getCategories() == null ? List.of() : promotion.getCategories())
+                .passengerRules(toPassengerRuleResponses(promotion.getPassengerRules()))
                 .usageLimit(promotion.getUsageLimit())
                 .usedCount(promotion.getUsedCount())
                 .easeScore(promotion.getEaseScore())
@@ -157,6 +160,49 @@ public class PromotionAppServiceImpl implements PromotionAppService {
                 .expiringSoon(isExpiringSoon(promotion))
                 .daysLeft(daysLeft)
                 .build();
+    }
+
+    private List<PromotionPassengerRule> toPassengerRules(List<PromotionRequest.PassengerRuleRequest> rules) {
+        if (rules == null) {
+            return null;
+        }
+        return rules.stream()
+                .map(rule -> PromotionPassengerRule.builder()
+                        .id(rule.getId())
+                        .passengerType(normalizePassengerType(rule.getPassengerType()))
+                        .label(normalizeBlank(rule.getLabel()))
+                        .minAge(rule.getMinAge())
+                        .maxAge(rule.getMaxAge())
+                        .discountType(normalizeBlank(rule.getDiscountType()))
+                        .discountValue(rule.getDiscountValue())
+                        .maxDiscountAmount(rule.getMaxDiscountAmount())
+                        .verificationRequired(rule.getVerificationRequired())
+                        .description(rule.getDescription())
+                        .status(normalizeBlank(rule.getStatus()))
+                        .build())
+                .collect(Collectors.toList());
+    }
+
+    private List<PromotionResponse.PassengerRuleResponse> toPassengerRuleResponses(List<PromotionPassengerRule> rules) {
+        if (rules == null || rules.isEmpty()) {
+            return List.of();
+        }
+        return rules.stream()
+                .map(rule -> PromotionResponse.PassengerRuleResponse.builder()
+                        .id(rule.getId())
+                        .passengerType(rule.getPassengerType())
+                        .label(rule.getLabel())
+                        .minAge(rule.getMinAge())
+                        .maxAge(rule.getMaxAge())
+                        .discountType(rule.getDiscountType())
+                        .discountLabel(discountLabel(rule.getDiscountType(), rule.getDiscountValue()))
+                        .discountValue(rule.getDiscountValue())
+                        .maxDiscountAmount(rule.getMaxDiscountAmount())
+                        .verificationRequired(rule.getVerificationRequired())
+                        .description(rule.getDescription())
+                        .status(rule.getStatus())
+                        .build())
+                .collect(Collectors.toList());
     }
 
     private PromotionValidationResponse invalid(String code, BigDecimal amount, String message) {
@@ -187,11 +233,14 @@ public class PromotionAppServiceImpl implements PromotionAppService {
     }
 
     private String discountLabel(Promotion promotion) {
-        BigDecimal value = promotion.getDiscountValue();
-        if ("percent".equalsIgnoreCase(promotion.getDiscountType())) {
+        return discountLabel(promotion.getDiscountType(), promotion.getDiscountValue());
+    }
+
+    private String discountLabel(String discountType, BigDecimal value) {
+        if ("percent".equalsIgnoreCase(discountType)) {
             return "Giam " + formatNumber(value) + "%";
         }
-        if ("serviceFee".equalsIgnoreCase(promotion.getDiscountType())) {
+        if ("serviceFee".equalsIgnoreCase(discountType)) {
             return "Mien phi dich vu";
         }
         return "Giam " + formatNumber(value) + "d";
@@ -281,6 +330,11 @@ public class PromotionAppServiceImpl implements PromotionAppService {
     }
 
     private String normalizeCode(String value) {
+        String normalized = normalizeBlank(value);
+        return normalized == null ? null : normalized.toUpperCase(Locale.ROOT);
+    }
+
+    private String normalizePassengerType(String value) {
         String normalized = normalizeBlank(value);
         return normalized == null ? null : normalized.toUpperCase(Locale.ROOT);
     }

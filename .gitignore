@@ -47,6 +47,7 @@ run_error.log
 
 ### Local application secrets ###
 vetautet-start/src/main/resources/application-local.yml
+vetautet_tidb*.sql
 
 ### Docker runtime data ###
 environment/data/
