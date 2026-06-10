@@ -48,6 +48,24 @@ public class RedisConfig {
     @Value("${spring.data.redis.sentinel.nodes:}")
     private String redisSentinelNodes;
 
+    @Value("${REDISSON_THREADS:2}")
+    private int redissonThreads;
+
+    @Value("${REDISSON_NETTY_THREADS:4}")
+    private int redissonNettyThreads;
+
+    @Value("${REDISSON_CONNECTION_POOL_SIZE:8}")
+    private int redissonConnectionPoolSize;
+
+    @Value("${REDISSON_CONNECTION_MINIMUM_IDLE_SIZE:1}")
+    private int redissonConnectionMinimumIdleSize;
+
+    @Value("${REDISSON_SUBSCRIPTION_CONNECTION_POOL_SIZE:4}")
+    private int redissonSubscriptionConnectionPoolSize;
+
+    @Value("${REDISSON_SUBSCRIPTION_CONNECTION_MINIMUM_IDLE_SIZE:1}")
+    private int redissonSubscriptionConnectionMinimumIdleSize;
+
     @Bean
     public RedisTemplate<String, Object> redisTemplate(RedisConnectionFactory connectionFactory) {
         RedisTemplate<String, Object> template = new RedisTemplate<>();
@@ -78,6 +96,8 @@ public class RedisConfig {
     @Bean
     public RedissonClient redissonClient() {
         Config config = new Config();
+        config.setThreads(redissonThreads);
+        config.setNettyThreads(redissonNettyThreads);
         if (redisSentinelMaster != null && !redisSentinelMaster.isBlank()
                 && redisSentinelNodes != null && !redisSentinelNodes.isBlank()) {
             String[] sentinelAddresses = java.util.Arrays.stream(redisSentinelNodes.split(","))
@@ -91,7 +111,11 @@ public class RedisConfig {
         } else {
             RedisEndpoint endpoint = resolveRedisEndpoint();
             SingleServerConfig singleServer = config.useSingleServer()
-                    .setAddress(endpoint.address());
+                    .setAddress(endpoint.address())
+                    .setConnectionPoolSize(redissonConnectionPoolSize)
+                    .setConnectionMinimumIdleSize(redissonConnectionMinimumIdleSize)
+                    .setSubscriptionConnectionPoolSize(redissonSubscriptionConnectionPoolSize)
+                    .setSubscriptionConnectionMinimumIdleSize(redissonSubscriptionConnectionMinimumIdleSize);
             if (endpoint.username() != null && !endpoint.username().isBlank()) {
                 singleServer.setUsername(endpoint.username());
             }
