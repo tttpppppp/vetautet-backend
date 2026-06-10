@@ -33,7 +33,7 @@ public class SecurityConfig {
     @Autowired
     private JwtAuthFilter jwtAuthFilter;
 
-    @Value("${vetautet.cors.allowed-origin-patterns:http://localhost:5173,http://127.0.0.1:5173,https://*.ngrok-free.app,https://*.onrender.com}")
+    @Value("${vetautet.cors.allowed-origin-patterns:http://localhost:5173,http://127.0.0.1:5173,https://*.ngrok-free.app,https://*.onrender.com,https://*.vercel.app}")
     private String allowedOriginPatterns;
     
     @Autowired
