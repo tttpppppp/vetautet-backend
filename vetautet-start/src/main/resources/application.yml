@@ -2,16 +2,14 @@ server:
   port: ${PORT:8080}
   tomcat:
     threads:
-      max: ${SERVER_TOMCAT_THREADS_MAX:400}
-      min-spare: ${SERVER_TOMCAT_THREADS_MIN_SPARE:50}
+      max: ${SERVER_TOMCAT_THREADS_MAX:80}
+      min-spare: ${SERVER_TOMCAT_THREADS_MIN_SPARE:5}
     accept-count: ${SERVER_TOMCAT_ACCEPT_COUNT:1000}
-    max-connections: ${SERVER_TOMCAT_MAX_CONNECTIONS:20000}
+    max-connections: ${SERVER_TOMCAT_MAX_CONNECTIONS:2000}
   servlet:
     context-path: /api/v1
 
 spring:
-  config:
-    import: optional:classpath:application-local.yml
   mvc:
     pathmatch:
       matching-strategy: ant_path_matcher
