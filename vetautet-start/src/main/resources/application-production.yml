@@ -1,0 +1,36 @@
+server:
+  address: 0.0.0.0
+
+spring:
+  main:
+    lazy-initialization: ${SPRING_MAIN_LAZY_INITIALIZATION:true}
+  data:
+    jpa:
+      repositories:
+        bootstrap-mode: ${JPA_REPOSITORY_BOOTSTRAP_MODE:lazy}
+  datasource:
+    hikari:
+      maximum-pool-size: ${DB_MAX_POOL_SIZE:3}
+      minimum-idle: ${DB_MIN_IDLE:1}
+      connection-timeout: ${DB_CONNECTION_TIMEOUT_MS:30000}
+  jpa:
+    hibernate:
+      ddl-auto: ${JPA_DDL_AUTO:none}
+    open-in-view: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.MySQLDialect
+        temp:
+          use_jdbc_metadata_defaults: false
+
+springdoc:
+  api-docs:
+    enabled: ${SPRINGDOC_ENABLED:false}
+  swagger-ui:
+    enabled: ${SPRINGDOC_ENABLED:false}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
