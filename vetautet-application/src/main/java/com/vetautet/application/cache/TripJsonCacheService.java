@@ -26,14 +26,18 @@ public class TripJsonCacheService {
     private static final long LOCAL_CACHE_MAX_SIZE = 10_000;
     private static final long LOCAL_CACHE_EXPIRE_MINUTES = 10;
     private static final String LOCK_PREFIX = "lock:trip-json:";
-    private static final long LOCK_WAIT_SECONDS = 5;
-    private static final long LOCK_LEASE_SECONDS = 10;
 
     private final StringRedisTemplate stringRedisTemplate;
     private final RedissonClient redissonClient;
 
     @Value("${vetautet.cache.trip.log-local-cache:true}")
     private boolean logLocalCache;
+
+    @Value("${vetautet.cache.trip.lock-wait-seconds:30}")
+    private long lockWaitSeconds;
+
+    @Value("${vetautet.cache.trip.lock-lease-seconds:60}")
+    private long lockLeaseSeconds;
 
     private final Cache<String, CacheEntry> localCache = CacheBuilder.newBuilder()
             .initialCapacity(LOCAL_CACHE_INITIAL_CAPACITY)
@@ -65,8 +69,19 @@ public class TripJsonCacheService {
 
         RLock lock = redissonClient.getLock(LOCK_PREFIX + key);
         try {
-            if (!lock.tryLock(LOCK_WAIT_SECONDS, LOCK_LEASE_SECONDS, TimeUnit.SECONDS)) {
-                throw new RuntimeException("Cannot acquire distributed cache lock for key: " + key);
+            if (!lock.tryLock(lockWaitSeconds, lockLeaseSeconds, TimeUnit.SECONDS)) {
+                String redisValue = stringRedisTemplate.opsForValue().get(key);
+                if (redisValue != null) {
+                    log.debug("[TRIP JSON CACHE] REDIS_HIT_AFTER_LOCK_TIMEOUT key={}", key);
+                    putLocal(key, redisValue, localTtl, System.currentTimeMillis());
+                    return redisValue;
+                }
+                log.warn("[TRIP JSON CACHE] LOCK_TIMEOUT key={} waitSeconds={} -> loading without distributed lock",
+                        key, lockWaitSeconds);
+                String value = loader.get();
+                stringRedisTemplate.opsForValue().set(key, value, redisTtl);
+                putLocal(key, value, localTtl, System.currentTimeMillis());
+                return value;
             }
 
             now = System.currentTimeMillis();
@@ -109,8 +124,21 @@ public class TripJsonCacheService {
 
         RLock lock = redissonClient.getLock(LOCK_PREFIX + key);
         try {
-            if (!lock.tryLock(LOCK_WAIT_SECONDS, LOCK_LEASE_SECONDS, TimeUnit.SECONDS)) {
-                throw new RuntimeException("Cannot acquire distributed cache lock for key: " + key);
+            if (!lock.tryLock(lockWaitSeconds, lockLeaseSeconds, TimeUnit.SECONDS)) {
+                String redisValue = stringRedisTemplate.opsForValue().get(key);
+                if (redisValue != null) {
+                    log.info("[TRIP JSON CACHE] REDIS_HIT_AFTER_LOCK_TIMEOUT key={} bytes={}",
+                            key, redisValue.getBytes(StandardCharsets.UTF_8).length);
+                    byte[] bytes = redisValue.getBytes(StandardCharsets.UTF_8);
+                    putLocalBytes(key, bytes, localTtl, System.currentTimeMillis());
+                    return bytes;
+                }
+                log.warn("[TRIP JSON CACHE] LOCK_TIMEOUT key={} waitSeconds={} -> loading without distributed lock",
+                        key, lockWaitSeconds);
+                byte[] value = loader.get();
+                stringRedisTemplate.opsForValue().set(key, new String(value, StandardCharsets.UTF_8), redisTtl);
+                putLocalBytes(key, value, localTtl, System.currentTimeMillis());
+                return value;
             }
 
             now = System.currentTimeMillis();
