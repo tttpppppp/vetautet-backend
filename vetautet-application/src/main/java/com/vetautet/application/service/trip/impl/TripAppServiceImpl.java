@@ -12,11 +12,13 @@ import com.vetautet.application.mapper.UserMapper;
 import com.vetautet.application.service.trip.TripAppService;
 import com.vetautet.domain.model.Booking;
 import com.vetautet.domain.model.BookingDetail;
+import com.vetautet.domain.model.DestinationSummary;
 import com.vetautet.domain.model.Promotion;
-import com.vetautet.domain.model.Station;
+import com.vetautet.domain.model.RouteSummary;
 import com.vetautet.domain.model.Ticket;
 import com.vetautet.domain.model.Trip;
 import com.vetautet.domain.model.TripSegment;
+import com.vetautet.domain.model.TripSummary;
 import com.vetautet.domain.model.TripStop;
 import com.vetautet.domain.repository.TripScheduleRepository;
 import com.vetautet.domain.service.BookingDomainService;
@@ -36,11 +38,7 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.Duration;
 import java.time.LocalDate;
-import java.time.LocalDateTime;
-import java.util.ArrayList;
 import java.util.Comparator;
-import java.util.HashMap;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -102,78 +100,29 @@ public class TripAppServiceImpl implements TripAppService {
 
     @Override
     public List<TripResponse> getPopularTrips(int limit) {
-        Comparator<Trip> popularComparator = Comparator
-                .comparingInt(this::countBookedSeats)
-                .reversed()
-                .thenComparing(Comparator.comparingInt(this::countAvailableSeats).reversed())
-                .thenComparing(this::minTicketPrice, Comparator.nullsLast(BigDecimal::compareTo))
-                .thenComparing(Trip::getDepartureTime, Comparator.nullsLast(Comparator.naturalOrder()));
-
-        return tripDomainService.getAllActiveTrips().stream()
-                .sorted(popularComparator)
-                .limit(normalizeLimit(limit))
-                .map(trip -> userMapper.toTripResponse(trip, false))
+        return tripDomainService.getPopularTripSummaries(normalizeLimit(limit)).stream()
+                .map(this::toTripResponse)
                 .collect(Collectors.toList());
     }
 
     @Override
     public List<PopularRouteResponse> getPopularRoutes(int limit) {
-        Map<String, RouteAggregate> routes = new HashMap<>();
-        LocalDateTime now = LocalDateTime.now();
-
-        for (Trip trip : tripDomainService.getAllActiveTrips()) {
-            if (trip.getDepartureStation() == null || trip.getArrivalStation() == null) {
-                continue;
-            }
-
-            String key = trip.getDepartureStation().getCode() + "->" + trip.getArrivalStation().getCode();
-            RouteAggregate route = routes.computeIfAbsent(key, ignored ->
-                    new RouteAggregate(trip.getDepartureStation(), trip.getArrivalStation()));
-            route.apply(trip, now, countAvailableSeats(trip), minTicketPrice(trip));
-        }
-
-        return routes.values().stream()
-                .sorted(Comparator.comparingInt(RouteAggregate::getTripsCount).reversed()
-                        .thenComparing(RouteAggregate::getMinPrice, Comparator.nullsLast(BigDecimal::compareTo)))
-                .limit(normalizeLimit(limit))
-                .map(RouteAggregate::toResponse)
+        return tripDomainService.getPopularRouteSummaries(normalizeLimit(limit)).stream()
+                .map(this::toPopularRouteResponse)
                 .collect(Collectors.toList());
     }
 
     @Override
     public List<PopularDestinationResponse> getPopularDestinations(int limit) {
-        Map<String, DestinationAggregate> destinations = new HashMap<>();
-        LocalDateTime now = LocalDateTime.now();
-
-        for (Trip trip : tripDomainService.getAllActiveTrips()) {
-            if (trip.getArrivalStation() == null) {
-                continue;
-            }
-
-            String key = trip.getArrivalStation().getCode();
-            DestinationAggregate destination = destinations.computeIfAbsent(key, ignored ->
-                    new DestinationAggregate(trip.getArrivalStation()));
-            destination.apply(trip, now, countAvailableSeats(trip), minTicketPrice(trip));
-        }
-
-        return destinations.values().stream()
-                .sorted(Comparator.comparingInt(DestinationAggregate::getTripsCount).reversed()
-                        .thenComparing(DestinationAggregate::getMinPrice, Comparator.nullsLast(BigDecimal::compareTo)))
-                .limit(normalizeLimit(limit))
-                .map(DestinationAggregate::toResponse)
+        return tripDomainService.getPopularDestinationSummaries(normalizeLimit(limit)).stream()
+                .map(this::toPopularDestinationResponse)
                 .collect(Collectors.toList());
     }
 
     @Override
     public List<TripResponse> getUpcomingDepartures(int limit) {
-        LocalDateTime now = LocalDateTime.now();
-
-        return tripDomainService.getAllActiveTrips().stream()
-                .filter(trip -> trip.getDepartureTime() != null)
-                .filter(trip -> !trip.getDepartureTime().isBefore(now))
-                .sorted(Comparator.comparing(Trip::getDepartureTime))
-                .limit(normalizeLimit(limit))
-                .map(trip -> userMapper.toTripResponse(trip, false))
+        return tripDomainService.getUpcomingTripSummaries(normalizeLimit(limit)).stream()
+                .map(this::toTripResponse)
                 .collect(Collectors.toList());
     }
 
@@ -182,12 +131,8 @@ public class TripAppServiceImpl implements TripAppService {
         LocalDate scheduleDate = date != null ? date : LocalDate.now();
         String stationFilter = normalizeStation(station);
 
-        return getAllTrips().stream()
-                .filter(trip -> trip.getDepartureTime() != null)
-                .filter(trip -> trip.getDepartureTime().toLocalDate().equals(scheduleDate))
-                .filter(trip -> stationFilter == null || matchesStation(trip, stationFilter))
-                .sorted(Comparator.comparing(TripResponse::getDepartureTime))
-                .limit(normalizeLimit(limit))
+        return tripDomainService.getScheduleTripSummaries(scheduleDate, stationFilter, normalizeLimit(limit)).stream()
+                .map(this::toTripResponse)
                 .collect(Collectors.toList());
     }
 
@@ -459,15 +404,6 @@ public class TripAppServiceImpl implements TripAppService {
         return station.trim().toLowerCase();
     }
 
-    private boolean matchesStation(TripResponse trip, String stationFilter) {
-        return containsIgnoreCase(trip.getDepartureStation(), stationFilter)
-                || containsIgnoreCase(trip.getArrivalStation(), stationFilter);
-    }
-
-    private boolean containsIgnoreCase(String value, String keyword) {
-        return value != null && value.toLowerCase().contains(keyword);
-    }
-
     @Override
     @Transactional
     public TripResponse createTrip(TripCreateRequest request) {
@@ -529,6 +465,69 @@ public class TripAppServiceImpl implements TripAppService {
             return 6;
         }
         return Math.min(limit, 12);
+    }
+
+    private TripResponse toTripResponse(TripSummary summary) {
+        TripResponse response = new TripResponse();
+        response.setId(summary.id());
+        response.setTrainCode(summary.trainCode());
+        response.setTrainCategory(summary.trainCategory());
+        response.setDepartureStation(summary.departureStation());
+        response.setArrivalStation(summary.arrivalStation());
+        response.setDepartureTime(summary.departureTime());
+        response.setArrivalTime(summary.arrivalTime());
+        response.setDuration(summary.duration());
+        response.setPrice(summary.minPrice());
+        response.setMinPrice(summary.minPrice());
+        response.setAvailableSeats(toInteger(summary.availableSeats()));
+        response.setTotalSeats(toInteger(summary.totalSeats()));
+        response.setStatus(summary.status());
+        response.setCarriages(null);
+        return response;
+    }
+
+    private PopularRouteResponse toPopularRouteResponse(RouteSummary summary) {
+        return new PopularRouteResponse(
+                summary.departureStationId(),
+                summary.departureStation(),
+                summary.departureStationCode(),
+                summary.arrivalStationId(),
+                summary.arrivalStation(),
+                summary.arrivalStationCode(),
+                toInteger(summary.tripsCount()),
+                toInteger(summary.availableSeats()),
+                summary.minPrice(),
+                summary.nextDepartureTime(),
+                splitCsv(summary.trainCategoriesCsv())
+        );
+    }
+
+    private PopularDestinationResponse toPopularDestinationResponse(DestinationSummary summary) {
+        return new PopularDestinationResponse(
+                summary.stationId(),
+                summary.stationName(),
+                summary.stationCode(),
+                summary.location(),
+                toInteger(summary.tripsCount()),
+                toInteger(summary.availableSeats()),
+                summary.minPrice(),
+                summary.nextDepartureTime(),
+                null
+        );
+    }
+
+    private Integer toInteger(Long value) {
+        return value == null ? 0 : Math.toIntExact(value);
+    }
+
+    private List<String> splitCsv(String value) {
+        if (value == null || value.isBlank()) {
+            return List.of();
+        }
+        return java.util.Arrays.stream(value.split(","))
+                .map(String::trim)
+                .filter(item -> !item.isBlank())
+                .collect(Collectors.toList());
     }
 
     private List<TripResponse> applyPromotion(List<TripResponse> trips, String rawPromoCode) {
@@ -651,156 +650,6 @@ public class TripAppServiceImpl implements TripAppService {
             return null;
         }
         return rawPromoCode.trim().toUpperCase();
-    }
-
-    private int countBookedSeats(Trip trip) {
-        return countTicketsByStatus(trip, "BOOKED");
-    }
-
-    private int countAvailableSeats(Trip trip) {
-        return countTicketsByStatus(trip, "AVAILABLE");
-    }
-
-    private int countTicketsByStatus(Trip trip, String status) {
-        if (trip.getTickets() == null) {
-            return 0;
-        }
-        return (int) trip.getTickets().stream()
-                .filter(ticket -> status.equalsIgnoreCase(ticket.getStatus()))
-                .count();
-    }
-
-    private BigDecimal minTicketPrice(Trip trip) {
-        if (trip.getTickets() == null) {
-            return null;
-        }
-        return trip.getTickets().stream()
-                .map(ticket -> ticket.getPrice())
-                .filter(price -> price != null)
-                .min(BigDecimal::compareTo)
-                .orElse(null);
-    }
-
-    private static BigDecimal minPrice(BigDecimal current, BigDecimal candidate) {
-        if (current == null) {
-            return candidate;
-        }
-        if (candidate == null) {
-            return current;
-        }
-        return current.min(candidate);
-    }
-
-    private static boolean isUpcoming(LocalDateTime departureTime, LocalDateTime now) {
-        return departureTime != null && !departureTime.isBefore(now);
-    }
-
-    private static void applyNextDeparture(RouteAggregate aggregate, Trip trip, LocalDateTime now) {
-        if (!isUpcoming(trip.getDepartureTime(), now)) {
-            return;
-        }
-        if (aggregate.nextDepartureTime == null || trip.getDepartureTime().isBefore(aggregate.nextDepartureTime)) {
-            aggregate.nextDepartureTime = trip.getDepartureTime();
-        }
-    }
-
-    private static void applyNextDeparture(DestinationAggregate aggregate, Trip trip, LocalDateTime now) {
-        if (!isUpcoming(trip.getDepartureTime(), now)) {
-            return;
-        }
-        if (aggregate.nextDepartureTime == null || trip.getDepartureTime().isBefore(aggregate.nextDepartureTime)) {
-            aggregate.nextDepartureTime = trip.getDepartureTime();
-        }
-    }
-
-    private static class RouteAggregate {
-        private final Station departureStation;
-        private final Station arrivalStation;
-        private final Set<String> trainCategories = new LinkedHashSet<>();
-        private int tripsCount;
-        private int availableSeats;
-        private BigDecimal minPrice;
-        private LocalDateTime nextDepartureTime;
-
-        private RouteAggregate(Station departureStation, Station arrivalStation) {
-            this.departureStation = departureStation;
-            this.arrivalStation = arrivalStation;
-        }
-
-        private void apply(Trip trip, LocalDateTime now, int tripAvailableSeats, BigDecimal tripMinPrice) {
-            tripsCount++;
-            availableSeats += tripAvailableSeats;
-            minPrice = TripAppServiceImpl.minPrice(minPrice, tripMinPrice);
-            applyNextDeparture(this, trip, now);
-            if (trip.getTrain() != null && trip.getTrain().getCategory() != null) {
-                trainCategories.add(trip.getTrain().getCategory());
-            }
-        }
-
-        private int getTripsCount() {
-            return tripsCount;
-        }
-
-        private BigDecimal getMinPrice() {
-            return minPrice;
-        }
-
-        private PopularRouteResponse toResponse() {
-            return new PopularRouteResponse(
-                    departureStation.getId(),
-                    departureStation.getName(),
-                    departureStation.getCode(),
-                    arrivalStation.getId(),
-                    arrivalStation.getName(),
-                    arrivalStation.getCode(),
-                    tripsCount,
-                    availableSeats,
-                    minPrice,
-                    nextDepartureTime,
-                    new ArrayList<>(trainCategories)
-            );
-        }
-    }
-
-    private static class DestinationAggregate {
-        private final Station station;
-        private int tripsCount;
-        private int availableSeats;
-        private BigDecimal minPrice;
-        private LocalDateTime nextDepartureTime;
-
-        private DestinationAggregate(Station station) {
-            this.station = station;
-        }
-
-        private void apply(Trip trip, LocalDateTime now, int tripAvailableSeats, BigDecimal tripMinPrice) {
-            tripsCount++;
-            availableSeats += tripAvailableSeats;
-            minPrice = TripAppServiceImpl.minPrice(minPrice, tripMinPrice);
-            applyNextDeparture(this, trip, now);
-        }
-
-        private int getTripsCount() {
-            return tripsCount;
-        }
-
-        private BigDecimal getMinPrice() {
-            return minPrice;
-        }
-
-        private PopularDestinationResponse toResponse() {
-            return new PopularDestinationResponse(
-                    station.getId(),
-                    station.getName(),
-                    station.getCode(),
-                    station.getLocation(),
-                    tripsCount,
-                    availableSeats,
-                    minPrice,
-                    nextDepartureTime,
-                    null
-            );
-        }
     }
 
     private record RouteSegments(List<Long> segmentIds) {

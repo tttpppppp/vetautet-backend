@@ -1,8 +1,11 @@
 package com.vetautet.domain.service.impl;
 
 import com.vetautet.domain.model.Station;
+import com.vetautet.domain.model.DestinationSummary;
+import com.vetautet.domain.model.RouteSummary;
 import com.vetautet.domain.model.Train;
 import com.vetautet.domain.model.Trip;
+import com.vetautet.domain.model.TripSummary;
 import com.vetautet.domain.repository.StationRepository;
 import com.vetautet.domain.repository.TrainRepository;
 import com.vetautet.domain.repository.TripRepository;
@@ -30,6 +33,31 @@ public class TripDomainServiceImpl implements TripDomainService {
     @Override
     public List<Trip> getAllActiveTrips() {
         return tripRepository.findAllActive();
+    }
+
+    @Override
+    public List<TripSummary> getPopularTripSummaries(int limit) {
+        return tripRepository.findPopularSummaries(limit);
+    }
+
+    @Override
+    public List<TripSummary> getUpcomingTripSummaries(int limit) {
+        return tripRepository.findUpcomingSummaries(limit);
+    }
+
+    @Override
+    public List<TripSummary> getScheduleTripSummaries(LocalDate date, String station, int limit) {
+        return tripRepository.findScheduleSummaries(date, station, limit);
+    }
+
+    @Override
+    public List<RouteSummary> getPopularRouteSummaries(int limit) {
+        return tripRepository.findPopularRouteSummaries(limit);
+    }
+
+    @Override
+    public List<DestinationSummary> getPopularDestinationSummaries(int limit) {
+        return tripRepository.findPopularDestinationSummaries(limit);
     }
 
     @Override
